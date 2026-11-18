@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=ZahnCAD
+Comment=View and prepare dental scan meshes for research
+Exec=zahncad
+Icon=zahncad
+Categories=Graphics;Science;
+Terminal=false

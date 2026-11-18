@@ -1,4 +1,5 @@
 #include "zahn/surface.hpp"
+#include "zahn/preparation.hpp"
 #include "zahn/document.hpp"
 #include <QCoreApplication>
 #include <QTemporaryDir>
@@ -11,11 +12,67 @@
 #include <cmath>
 #include <iostream>
 void require(bool value,const char* why){if(!value)throw std::runtime_error(why);}
+void checkPreparation(zahn::Scan scan,const QTemporaryDir& directory) {
+  const zahn::LandmarkTriplet moving{{{0,0,0},{2,0,0},{0,2,0}}};
+  const zahn::LandmarkTriplet fixed{{{5,6,7},{5,8,7},{3,6,7}}};
+  const auto fit=zahn::alignLandmarks(moving,fixed);
+  require(fit.rms<1e-9&&fit.maximum<1e-9,"Rigid registration residual");
+  const auto moved=zahn::transformMesh(*scan.mesh,fit);
+  const auto point=moved.triangles[0].v[1];
+  require(std::abs(point.x-5)<1e-9&&std::abs(point.y-8)<1e-9&&std::abs(point.z-7)<1e-9,
+          "Rigid registration transform");
+  require(moved.colors==scan.mesh->colors&&scan.mesh==scan.sourceMesh,"Registration lost original or colors");
+  bool rejected=false;
+  try{zahn::alignLandmarks({{{0,0,0},{1,0,0},{2,0,0}}},fixed);}
+  catch(const std::runtime_error&){rejected=true;}
+  require(rejected,"Collinear landmarks accepted");
+
+  auto stacked=*scan.mesh;
+  auto top=stacked.triangles.front();
+  for(auto& p:top.v)p.z+=1;
+  stacked.triangles.push_back(top);
+  stacked.colors.clear();
+  const auto report=zahn::analyzeInsertion(stacked,{0,0,1});
+  require(report.sampled==2&&report.undercuts==1&&std::abs(report.maximumDepth-1)<1e-9,
+          "Insertion shadow depth");
+  require(zahn::analyzeInsertion(stacked,{0,0,-1}).shadowed.triangles[0].v[0].z==1,
+          "Reversed insertion direction");
+  const auto blocked=zahn::inspect(zahn::blockout(stacked,{0,0,1},0.25));
+  require(blocked.closed()&&std::abs(blocked.maximum.z-1)<0.001&&
+          std::abs(blocked.minimum.z+0.25)<0.001,"Closed blockout bounds");
+  rejected=false;
+  try{
+    zahn::blockout(stacked,{0,0,1},0.25,[]{throw std::runtime_error("cancel");});
+  }catch(const std::runtime_error&){rejected=true;}
+  require(rejected,"Blockout ignored cancellation");
+
+  zahn::Document document;
+  document.addScan(scan);
+  scan.margin.assign(fixed.begin(),fixed.end());
+  scan.mesh=std::make_shared<const zahn::Mesh>(moved);
+  document.replaceScan(0,scan,"Trace and register");
+  document.history.undo();
+  require(document.project.scans[0].margin.empty(),"Margin undo failed");
+  document.history.redo();
+  const auto path=directory.filePath("margin.zahncad");
+  zahn::saveProject(document.project,path);
+  const auto reopened=zahn::loadProject(path);
+  const auto& saved=reopened.scans[0];
+  require(saved.margin.size()==3&&saved.margin[1].y==8&&saved.original==scan.original&&
+          saved.mesh!=saved.sourceMesh,"Version 3 margin and geometry roundtrip");
+  zahn::saveRecovery(document.project,directory.path());
+  zahn::saveRecovery(document.project,directory.path());
+  QFile corrupt(directory.filePath("recovery.zahncad"));
+  require(corrupt.open(QIODevice::WriteOnly)&&corrupt.write("broken")==6,"Corruption fixture write");
+  corrupt.close();
+  require(zahn::loadRecovery(directory.path()).scans[0].margin.size()==3,"Version 3 recovery fallback");
+}
 int main(int argc,char** argv){QCoreApplication app(argc,argv);try{
   if(argc==2){auto external=zahn::loadProject(QString::fromLocal8Bit(argv[1]));require(external.scans.size()==1,"Interop scan count");auto& scan=external.scans[0];require(scan.sourceMesh!=scan.mesh&&!scan.operations.isEmpty(),"Interop derived state");require(!scan.mesh->colors.empty()&&scan.mesh->colors.size()==scan.mesh->triangles.size(),"Interop colors");require(zahn::inspect(*scan.mesh).minimum.x>zahn::inspect(*scan.sourceMesh).minimum.x,"Interop crop bounds");}
   QTemporaryDir directory;auto write=[&](QString name,QByteArray data){QFile file(directory.filePath(name));require(file.open(QIODevice::WriteOnly),"fixture open");require(file.write(data)==data.size(),"fixture write");return file.fileName();};
   auto obj=write("colored.obj","v 0 0 0 1 0 0\nv 2 0 0 0 1 0\nv 0 2 0 0 0 1\nf -3 -2 -1\n");
   auto scan=zahn::importScan(obj,"Upper jaw",1);require(scan.mesh->colors.size()==1&&scan.mesh->colors[0][0][0]==255,"OBJ color import");
+  checkPreparation(scan,directory);
   auto legacy=[&](int version){QByteArray buffer(8192,'\0');size_t used=0;auto* writer=archive_write_new();archive_write_set_format_zip(writer);require(archive_write_open_memory(writer,buffer.data(),buffer.size(),&used)==ARCHIVE_OK,"Legacy fixture ZIP");
     auto entry=[&](const char* name,QByteArray bytes){auto* item=archive_entry_new();archive_entry_set_pathname(item,name);archive_entry_set_size(item,bytes.size());archive_entry_set_filetype(item,AE_IFREG);archive_entry_set_perm(item,0600);require(archive_write_header(writer,item)==ARCHIVE_OK,"Legacy fixture header");archive_entry_free(item);require(archive_write_data(writer,bytes.data(),bytes.size())==bytes.size(),"Legacy fixture data");};
     entry("scan.stl","solid test\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid test\n");entry("manifest.json",QByteArray("{\"format\":\"ZahnCAD\",\"version\":")+QByteArray::number(version)+",\"units\":\"mm\",\"caseId\":\"legacy\",\"scans\":[{\"name\":\"Legacy\",\"role\":\"Upper jaw\",\"source\":\"scan.stl\",\"scaleToMm\":2,\"visible\":true,\"opacity\":1}]}" );require(archive_write_close(writer)==ARCHIVE_OK,"Legacy fixture close");archive_write_free(writer);buffer.resize(qsizetype(used));return write("legacy.zip",buffer);};

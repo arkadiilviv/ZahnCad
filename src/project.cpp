@@ -18,7 +18,37 @@
 #include <stdexcept>
 namespace zahn {
 namespace {
+constexpr qsizetype maxManifestBytes=64*1024*1024;
 void check(bool ok,const char* message) {if(!ok)throw std::runtime_error(message);}
+bool supportedVersion(int version) { return version>=1&&version<=3; }
+bool validMarginPoint(Vec3 p) {
+  return std::isfinite(p.x)&&std::isfinite(p.y)&&std::isfinite(p.z)&&
+    std::max({std::abs(p.x),std::abs(p.y),std::abs(p.z)})<=1e8;
+}
+QJsonArray encodeMargin(const std::vector<Vec3>& points) {
+  check(points.size()>=3&&points.size()<=10000,"Invalid margin point count");
+  QJsonArray result;
+  for(const auto& p:points){
+    check(validMarginPoint(p),"Invalid margin coordinate");
+    result.append(QJsonArray{p.x,p.y,p.z});
+  }
+  return result;
+}
+std::vector<Vec3> decodeMargin(const QJsonValue& value) {
+  const auto points=value.toArray();
+  check(points.size()>=3&&points.size()<=10000,"Invalid margin point count");
+  std::vector<Vec3> result;
+  result.reserve(size_t(points.size()));
+  for(const auto& item:points){
+    const auto point=item.toArray();
+    check(point.size()==3&&point[0].isDouble()&&point[1].isDouble()&&point[2].isDouble(),
+          "Invalid margin point");
+    const Vec3 p{point[0].toDouble(),point[1].toDouble(),point[2].toDouble()};
+    check(validMarginPoint(p),"Invalid margin coordinate");
+    result.push_back(p);
+  }
+  return result;
+}
 // Verify ZIP CRCs before rotating a recovery file. A damaged latest snapshot
 // must never overwrite the last readable previous snapshot.
 bool validRecoveryArchive(const QString& path) {
@@ -32,11 +62,11 @@ bool validRecoveryArchive(const QString& path) {
   while((status=archive_read_next_header(a.get(),&entry))==ARCHIVE_OK){
     if(++entries>128)return false;bool isManifest=QString::fromUtf8(archive_entry_pathname(entry))=="manifest.json";
     char block[65536];la_ssize_t n;
-    while((n=archive_read_data(a.get(),block,sizeof(block)))>0){total+=size_t(n);if(total>1024ull*1024*1024)return false;if(isManifest){if(manifest.size()+n>1048576)return false;manifest.append(block,qsizetype(n));}}
+    while((n=archive_read_data(a.get(),block,sizeof(block)))>0){total+=size_t(n);if(total>1024ull*1024*1024)return false;if(isManifest){if(manifest.size()+n>maxManifestBytes)return false;manifest.append(block,qsizetype(n));}}
     if(n<0)return false;
   }
   auto document=QJsonDocument::fromJson(manifest);auto root=document.object();
-  return status==ARCHIVE_EOF&&root["format"]=="ZahnCAD"&&(root["version"].toInt(-1)==1||root["version"].toInt(-1)==2)&&root["scans"].isArray();
+  return status==ARCHIVE_EOF&&root["format"]=="ZahnCAD"&&supportedVersion(root["version"].toInt(-1))&&root["scans"].isArray();
 }
 Mesh parse(const QByteArray& b, const QString& format,const Checkpoint& checkpoint) {QTemporaryFile f;check(f.open(),"Temporary surface failed");for(qsizetype offset=0;offset<b.size();offset+=1048576){if(checkpoint)checkpoint();auto n=std::min(qsizetype(1048576),b.size()-offset);check(f.write(b.constData()+offset,n)==n,"Temporary surface write failed");}check(f.flush(),"Temporary surface flush failed");return readSurface(nativePath(f.fileName()),format.toStdString(),checkpoint);}
 QByteArray encodeMesh(const Mesh& mesh){
@@ -75,8 +105,30 @@ void saveProject(const Project& p,const QString& path) {
   auto writer=[](archive*,void* data,const void* b,size_t n)->la_ssize_t{return static_cast<QSaveFile*>(data)->write(static_cast<const char*>(b),qint64(n));};
   check(archive_write_open(a.get(),&file,nullptr,writer,nullptr)==ARCHIVE_OK,"ZIP open failed");
   auto add=[&](const QString& name,const QByteArray& bytes){auto* e=archive_entry_new();auto encoded=name.toUtf8();archive_entry_set_pathname(e,encoded.constData());archive_entry_set_size(e,bytes.size());archive_entry_set_filetype(e,AE_IFREG);archive_entry_set_perm(e,0600);int status=archive_write_header(a.get(),e);archive_entry_free(e);check(status==ARCHIVE_OK,"ZIP header failed");check(archive_write_data(a.get(),bytes.data(),bytes.size())==bytes.size(),"ZIP write failed");};
-  QJsonArray scans;for(size_t i=0;i<p.scans.size();++i){auto& s=p.scans[i];QString entry=QString("sources/%1.%2").arg(i).arg(s.format);QJsonObject item{{"name",s.name},{"role",s.role},{"source",entry},{"sourceFormat",s.format},{"scaleToMm",s.scale},{"visible",s.visible},{"opacity",s.opacity},{"operations",s.operations}};add(entry,s.original);if(s.sourceMesh&&s.mesh!=s.sourceMesh){QString current=QString("meshes/%1.zmesh").arg(i);add(current,encodeMesh(*s.mesh));item["current"]=current;}scans.append(item);}
-  add("manifest.json",QJsonDocument(QJsonObject{{"format","ZahnCAD"},{"version",2},{"caseId",p.id},{"units","mm"},{"scans",scans}}).toJson());
+  int version=2;
+  QJsonArray scans;
+  for(size_t i=0;i<p.scans.size();++i){
+    const auto& s=p.scans[i];
+    QString entry=QString("sources/%1.%2").arg(i).arg(s.format);
+    QJsonObject item{{"name",s.name},{"role",s.role},{"source",entry},{"sourceFormat",s.format},
+      {"scaleToMm",s.scale},{"visible",s.visible},{"opacity",s.opacity},{"operations",s.operations}};
+    add(entry,s.original);
+    if(s.sourceMesh&&s.mesh!=s.sourceMesh){
+      QString current=QString("meshes/%1.zmesh").arg(i);
+      add(current,encodeMesh(*s.mesh));
+      item["current"]=current;
+    }
+    if(!s.margin.empty()){
+      item["marginMm"]=encodeMargin(s.margin);
+      version=3;
+    }
+    scans.append(item);
+  }
+  const auto manifest=QJsonDocument(QJsonObject{{"format","ZahnCAD"},{"version",version},
+    {"caseId",p.id},{"units","mm"},{"scans",scans}}).toJson(QJsonDocument::Compact);
+  check(manifest.size()<=maxManifestBytes&&total+quint64(manifest.size())<=1024ull*1024*1024,
+        "Project manifest or expanded size exceeds limit");
+  add("manifest.json",manifest);
   check(archive_write_close(a.get())==ARCHIVE_OK,"ZIP close failed");check(file.commit(),"Atomic project commit failed");
 }
 Project loadProject(const QString& path,const Checkpoint& checkpoint) {
@@ -86,8 +138,36 @@ Project loadProject(const QString& path,const Checkpoint& checkpoint) {
   std::unique_ptr<archive,decltype(&archive_read_free)> a(archive_read_new(),archive_read_free);archive_read_support_format_zip(a.get());check(archive_read_open_memory(a.get(),bytes.data(),bytes.size())==ARCHIVE_OK,"Invalid ZIP");
   std::map<QString,QByteArray> entries;archive_entry* e=nullptr;int status;size_t total=0;
   while((status=archive_read_next_header(a.get(),&e))==ARCHIVE_OK){if(checkpoint)checkpoint();auto n=archive_entry_size(e);check(n>=0&&n<=512ll*1024*1024&&total+size_t(n)<=1024ull*1024*1024,"Project decompression limit exceeded");total+=size_t(n);check(entries.size()<128,"Too many archive entries");QString name=QString::fromUtf8(archive_entry_pathname(e));check(!entries.contains(name),"Duplicate archive entry");QByteArray b; b.reserve(qsizetype(n));char block[65536];for(;;){if(checkpoint)checkpoint();auto count=archive_read_data(a.get(),block,sizeof(block));check(count>=0,"Corrupt ZIP entry");if(!count)break;check(b.size()+count<=n,"Invalid ZIP entry size");b.append(block,qsizetype(count));}check(b.size()==n,"Truncated ZIP entry");entries.emplace(name,std::move(b));}
-  check(status==ARCHIVE_EOF,"Corrupt ZIP");QJsonParseError error;auto doc=QJsonDocument::fromJson(entries["manifest.json"],&error);check(error.error==QJsonParseError::NoError&&doc.isObject(),"Invalid manifest");auto root=doc.object();int version=root["version"].toInt(-1);check(root["format"]=="ZahnCAD"&&(version==1||version==2),"Unsupported project format/version");check(root["units"]=="mm"&&root["scans"].isArray(),"Invalid project metadata");
-  Project p;p.id=root["caseId"].toString();for(auto value:root["scans"].toArray()){if(checkpoint)checkpoint();auto o=value.toObject();Scan s;s.name=o["name"].toString();s.role=o["role"].toString();s.scale=o["scaleToMm"].toDouble(0);s.opacity=o["opacity"].toDouble(-1);s.visible=o["visible"].toBool();s.format=version==1?"stl":o["sourceFormat"].toString();check(s.format=="stl"||s.format=="ply"||s.format=="obj","Unsupported source format");check(s.opacity>=0&&s.opacity<=1,"Invalid opacity");auto it=entries.find(o["source"].toString());check(it!=entries.end(),"Missing scan");s.original=it->second;s.sourceMesh=std::make_shared<const Mesh>(scaled(parse(s.original,s.format,checkpoint),s.scale,checkpoint));s.mesh=s.sourceMesh;s.operations=o["operations"].toArray();if(o.contains("current")){auto current=entries.find(o["current"].toString());check(current!=entries.end(),"Missing current geometry");s.mesh=std::make_shared<const Mesh>(decodeMesh(current->second,checkpoint));}p.scans.push_back(std::move(s));}return p;
+  check(status==ARCHIVE_EOF,"Corrupt ZIP");QJsonParseError error;auto doc=QJsonDocument::fromJson(entries["manifest.json"],&error);check(error.error==QJsonParseError::NoError&&doc.isObject(),"Invalid manifest");auto root=doc.object();int version=root["version"].toInt(-1);check(root["format"]=="ZahnCAD"&&supportedVersion(version),"Unsupported project format/version");check(root["units"]=="mm"&&root["scans"].isArray(),"Invalid project metadata");
+  Project p;
+  p.id=root["caseId"].toString();
+  for(auto value:root["scans"].toArray()){
+    if(checkpoint)checkpoint();
+    const auto o=value.toObject();
+    Scan s;
+    s.name=o["name"].toString();
+    s.role=o["role"].toString();
+    s.scale=o["scaleToMm"].toDouble(0);
+    s.opacity=o["opacity"].toDouble(-1);
+    s.visible=o["visible"].toBool();
+    s.format=version==1?"stl":o["sourceFormat"].toString();
+    check(s.format=="stl"||s.format=="ply"||s.format=="obj","Unsupported source format");
+    check(s.opacity>=0&&s.opacity<=1,"Invalid opacity");
+    const auto it=entries.find(o["source"].toString());
+    check(it!=entries.end(),"Missing scan");
+    s.original=it->second;
+    s.sourceMesh=std::make_shared<const Mesh>(scaled(parse(s.original,s.format,checkpoint),s.scale,checkpoint));
+    s.mesh=s.sourceMesh;
+    s.operations=o["operations"].toArray();
+    if(o.contains("current")){
+      const auto current=entries.find(o["current"].toString());
+      check(current!=entries.end(),"Missing current geometry");
+      s.mesh=std::make_shared<const Mesh>(decodeMesh(current->second,checkpoint));
+    }
+    if(version>=3&&o.contains("marginMm"))s.margin=decodeMargin(o["marginMm"]);
+    p.scans.push_back(std::move(s));
+  }
+  return p;
 }
 void saveRecovery(const Project& project,const QString& directory){
   auto current=QDir(directory).filePath("recovery.zahncad");

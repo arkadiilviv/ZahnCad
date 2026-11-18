@@ -1,4 +1,4 @@
-# Scan preparation (0.3)
+# Scan preparation
 
 1. Use **Case → Import scan** for STL, PLY or OBJ. Confirm the scale to mm and
    role. Select a scan in the left panel before editing.
@@ -50,6 +50,47 @@ relative indices, homogeneous vertices and xyz RGB (0–1). Polygons are triangu
 OBJ MTL/image textures, PLY face textures, point clouds and external resources
 are not supported. Directions follow triangle winding, not imported normals.
 
-Geometry stays double precision internally and in v2 projects. STL exports use
+Geometry stays double precision internally and in saved projects. STL exports use
 32-bit coordinates. These tools require real-scan evaluation and do not establish
 manufacturing or clinical suitability.
+
+## Registration, margins, and insertion
+
+- Select the moving scan and choose **Prepare scan → Register using landmarks**.
+  Choose the fixed scan. Pick three well-separated, non-collinear matching
+  landmarks on each scan in the same order. Review the preview and landmark
+  residuals before applying. The transform preserves scale and vertex colors
+  and moves any saved margin with the scan. Inspect alignment away from the
+  three landmarks.
+- Choose **Prepare scan → Margin → Trace or edit margin** on a visible scan.
+  Click to add points. Shift+click near a point to move it. Remove the last
+  draft point or press Escape to discard edits. **Apply margin** saves a
+  closed polyline with straight segments between the picked surface points.
+  Use close spacing on curved areas. Geometry-changing preparation clears the
+  saved margin, apart from rigid registration. Undo restores it.
+- Orient the view along a proposed withdrawal direction and choose **Analyze
+  insertion from view**. Orbit to see sampled shadowed triangles in red.
+  The report checks up to 100,000 face centroids along parallel rays and gives
+  the largest sampled axial depth. Narrow undercuts can fall between samples.
+- **Block out from view** uses the current camera axis and a 0.05–5 mm grid.
+  Each sampled column extends from its first surface hit toward a plane one
+  grid step below the lowest source point on that axis. Review the resulting
+  closed envelope and its resolution before applying. The envelope adds a
+  base and has its own geometry. The source remains available through undo
+  or **Restore original scan**.
+
+## M2 acceptance
+
+Use the fixtures and provenance rules in [Evaluation](EVALUATION.md).
+The synthetic suite verifies a known rigid rotation/translation, degenerate
+landmark rejection, a 1 mm directional undercut, blockout topology and bounds,
+and margin undo, persistence and recovery. The desktop smoke can be run with
+`zahncad --m2-smoke-test examples/colored-scan.ply margin.png`. It exercises
+surface picking, point editing, registration, undo/redo, Save As, and
+blockout. Use a disposable output directory.
+
+For representative scans, record the selected region and expected tolerances
+before testing. Compare registration against independent landmarks excluded
+from the fit. Repeat the margin trace and record the observed displacement.
+Compare insertion results with an independently identified undercut, and rerun
+blockout at two grid spacings to record changes in its bounds and surface.

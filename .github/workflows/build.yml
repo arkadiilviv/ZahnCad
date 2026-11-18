@@ -1,5 +1,7 @@
 name: Native build
 on: [push, pull_request]
+permissions:
+  contents: read
 jobs:
   core:
     strategy:
@@ -11,19 +13,74 @@ jobs:
       - run: cmake -S . -B build -DBUILD_TESTING=ON
       - run: cmake --build build --config Release
       - run: ctest --test-dir build -C Release --output-on-failure
+  desktop-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        id: msys2
+        with:
+          msystem: UCRT64
+          update: true
+          pacboy: gcc:p cmake:p ninja:p qt6-base:p vtk:p libarchive:p
+      - name: Build and stage the desktop
+        env:
+          MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
+        run: |
+          $prefix = Join-Path $env:MSYS2_LOCATION ucrt64
+          ./scripts/build-windows.ps1 -Toolchain $prefix
+          python scripts/package_windows.py --prefix $prefix --output out/ZahnCAD-installer-payload
+      - name: Compile and check the unsigned installer
+        run: |
+          $compilerSetup = Join-Path $env:RUNNER_TEMP innosetup-6.7.4.exe
+          Invoke-WebRequest 'https://github.com/jrsoftware/issrc/releases/download/is-6_7_4/innosetup-6.7.4.exe' -OutFile $compilerSetup
+          if ((Get-FileHash $compilerSetup).Hash -ne 'a549929319f9120716677c685535ca4671e4b937b5fdc87e2585f32d8eb30e8c') { throw 'Inno Setup checksum mismatch' }
+          $compiler = Join-Path $env:RUNNER_TEMP InnoSetup
+          $setup = Start-Process $compilerSetup -ArgumentList '/PORTABLE=1','/CURRENTUSER','/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/DIR=`"$compiler`"" -WindowStyle Hidden -Wait -PassThru
+          if ($setup.ExitCode) { throw "Inno Setup failed with exit code $($setup.ExitCode)" }
+          & "$compiler/ISCC.exe" /Qp scripts/zahncad.iss
+          if ($LASTEXITCODE) { throw 'Installer compilation failed' }
+          $installer = Get-Item out/*-Setup.exe
+          "$((Get-FileHash $installer).Hash.ToLowerInvariant())  $($installer.Name)" | Set-Content "$($installer.FullName).sha256"
+          $target = Join-Path $env:RUNNER_TEMP ZahnCAD-test
+          $setup = Start-Process $installer.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/DIR=`"$target`"" -WindowStyle Hidden -Wait -PassThru
+          if ($setup.ExitCode) { throw "Installer failed with exit code $($setup.ExitCode)" }
+          & "$target/zahncad-cli.exe" inspect examples/triangle.stl
+          if ($LASTEXITCODE) { throw 'Installed CLI failed' }
+          $uninstall = Start-Process "$target/unins000.exe" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -WindowStyle Hidden -Wait -PassThru
+          if ($uninstall.ExitCode -or (Test-Path "$target/zahncad.exe")) { throw 'Uninstall failed' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64-installer
+          if-no-files-found: error
+          path: |
+            out/*-Setup.exe
+            out/*-Setup.exe.sha256
   desktop-linux:
     runs-on: ubuntu-latest
     container: ubuntu:26.04
     steps:
       - uses: actions/checkout@v4
       - name: Install matching Qt6 and VTK development packages
-        run: apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends g++ cmake ninja-build qt6-base-dev libqt6sql6-sqlite libvtk9-qt-dev libarchive-dev xvfb xauth libgl1-mesa-dri
+        run: apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends g++ cmake ninja-build qt6-base-dev libqt6sql6-sqlite libvtk9-qt-dev libarchive-dev xvfb xauth libgl1-mesa-dri python3 ca-certificates curl file
       - run: cmake -S . -B build -G Ninja -DZAHNCAD_DESKTOP=ON -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build build --parallel 2
       - run: ctest --test-dir build --output-on-failure
       - run: QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a build/zahncad --smoke-test "$PWD/examples/triangle.stl" "$PWD/build/smoke-linux.png"
       - run: QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a build/zahncad --stage2-smoke-test "$PWD/examples/colored-scan.ply" "$PWD/build/preparation-linux.png"
       - run: QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a build/zahncad --stage2-smoke-test "$PWD/examples/brush-test.ply" "$PWD/build/brush-linux.png"
+      - run: QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a python3 scripts/verify_recovery.py build/zahncad build/recovery-evidence
+      - run: QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a build/zahncad --m2-smoke-test "$PWD/examples/colored-scan.ply" "$PWD/build/margin-linux.png"
+      - name: Build the AppImage
+        run: |
+          mkdir -p build/deploy
+          curl --fail --location --output build/deploy/linuxdeploy-x86_64.AppImage https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          curl --fail --location --output build/deploy/linuxdeploy-plugin-qt-x86_64.AppImage https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod +x build/deploy/*.AppImage
+          sha256sum build/deploy/*.AppImage
+          QMAKE="$(command -v qmake6)" sh scripts/package_appimage.sh build "$PWD/build/deploy/linuxdeploy-x86_64.AppImage"
+          cd out
+          sha256sum ZahnCAD-Linux-x64.AppImage > ZahnCAD-Linux-x64.AppImage.sha256
       - uses: actions/upload-artifact@v4
         with:
           name: linux-build-and-render-evidence
@@ -33,3 +90,28 @@ jobs:
             build/smoke-linux.png
             build/preparation-linux.png
             build/brush-linux.png.brush.png
+            build/smoke-linux.png.ruler.png
+            build/recovery-evidence/*.zahncad
+            build/margin-linux.png*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64-appimage
+          if-no-files-found: error
+          path: out/ZahnCAD-Linux-x64.AppImage*
+  appimage-runtime:
+    needs: desktop-linux
+    runs-on: ubuntu-latest
+    container: ubuntu:26.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-x64-appimage
+          path: out
+      - name: Smoke-test the AppImage without Qt or VTK packages
+        run: |
+          apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends xvfb xauth libgl1-mesa-dri libgl1 libegl1 libopengl0 libxkbcommon0 libxcb1 libfontconfig1 libharfbuzz0b fonts-dejavu-core
+          (cd out && sha256sum --check ZahnCAD-Linux-x64.AppImage.sha256)
+          chmod +x out/ZahnCAD-Linux-x64.AppImage
+          QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a out/ZahnCAD-Linux-x64.AppImage --appimage-extract-and-run --smoke-test "$PWD/examples/triangle.stl" "$PWD/out/appimage-smoke.png"
+          QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a out/ZahnCAD-Linux-x64.AppImage --appimage-extract-and-run --m2-smoke-test "$PWD/examples/colored-scan.ply" "$PWD/out/appimage-m2.png"

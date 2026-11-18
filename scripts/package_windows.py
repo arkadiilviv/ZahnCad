@@ -12,26 +12,25 @@ parser.add_argument('--output', type=pathlib.Path, default=pathlib.Path('out/Zah
 args = parser.parse_args()
 prefix, output = args.prefix.resolve(), args.output.resolve()
 output.mkdir(parents=True, exist_ok=True)
+queue = []
 for name in ('zahncad.exe', 'zahncad-cli.exe'):
-    shutil.copy2(args.build / name, output / name)
+    queue.append(pathlib.Path(shutil.copy2(args.build / name, output / name)))
 for group, plugin in (('platforms', 'qwindows.dll'), ('sqldrivers', 'qsqlite.dll')):
     destination = output / group
     destination.mkdir(exist_ok=True)
-    shutil.copy2(prefix / 'share/qt6/plugins' / group / plugin, destination / plugin)
+    queue.append(pathlib.Path(shutil.copy2(prefix / 'share/qt6/plugins' / group / plugin,
+                                          destination / plugin)))
 
 available = {p.name.lower(): p for p in (prefix / 'bin').glob('*.dll')}
-queue = list(output.rglob('*.exe')) + list(output.rglob('*.dll'))
-seen = set()
+seen = {binary.name.lower() for binary in queue}
 while queue:
     binary = queue.pop()
-    if binary.name.lower() in seen:
-        continue
-    seen.add(binary.name.lower())
     result = subprocess.run([str(prefix / 'bin/objdump.exe'), '-p', str(binary)],
                             check=True, capture_output=True, text=True)
     for name in re.findall(r'DLL Name:\s*(\S+)', result.stdout):
         dependency = available.get(name.lower())
         if dependency and name.lower() not in seen:
+            seen.add(name.lower())
             target = output / dependency.name
             shutil.copy2(dependency, target)
             queue.append(target)

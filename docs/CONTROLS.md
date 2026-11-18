@@ -14,7 +14,7 @@ Shortcuts apply to the main window, not modal filename/case/parameter dialogs.
 | Selection and display | Key |
 |---|---|
 | Vertex brush on/off | B |
-| Exit brush, retaining selection | Escape |
+| Exit brush or discard a margin or registration draft | Escape |
 | Smaller / larger radius | [ / ] |
 | Clear vertex selection | Ctrl+Shift+A |
 | Box widget / select vertices inside box | X / Shift+X |
@@ -34,6 +34,11 @@ Shortcuts apply to the main window, not modal filename/case/parameter dialogs.
 
 New/open/import/save/save-as use Ctrl+N/O/I/S/Shift+S. Undo: Ctrl+Z.
 Redo: Ctrl+Y or Ctrl+Shift+Z.
+
+Press **M**, then click two points on visible scan surfaces to measure the
+straight-line distance in millimetres. A third click starts a new measurement.
+Right-drag to orbit, Shift+right-drag to pan, and scroll to zoom while measuring.
+The ruler uses full-resolution geometry and respects axial clipping.
 
 ## Brush gestures
 

@@ -6,6 +6,8 @@ License: GPL-3.0-or-later. Version 0.3.1 adds camera/tool hotkeys and vertex bru
 See [capability status](docs/FEATURES.md), [development milestones](docs/ROADMAP.md)
 and [verification record](docs/VERIFICATION.md). Behavior and remaining limits are
 documented in [viewer reliability](docs/RELIABILITY.md).
+See [M0 research evaluation](docs/EVALUATION.md) and
+[M1 viewer and packaging acceptance](docs/M1_ACCEPTANCE.md) for work in progress.
 
 ## Implemented
 
@@ -31,7 +33,9 @@ documented in [viewer reliability](docs/RELIABILITY.md).
   and degenerate face removal, winding correction, limited hole filling,
   fixed-boundary smoothing and topology-preserving simplification.
 - Candidate previews and before/after reports with sampled bidirectional deviation;
-  geometry edits are undoable. Version 2 projects retain source and edited meshes.
+  geometry edits are undoable. Projects retain source and edited meshes.
+- Three-landmark rigid registration, editable saved margin traces, sampled
+  insertion analysis and directional blockout.
 
 See [scan-preparation instructions and limits](docs/SCAN_PREPARATION.md).
 See [keyboard and mouse controls](docs/CONTROLS.md), also available with F12.
@@ -83,15 +87,15 @@ plugins and VTK/libarchive runtime libraries when distributing a build.
 
 ## Current limits
 
-Windows and Ubuntu 26.04 desktop builds, automated tests and rendering smoke
-checks pass. The Linux binary archive requires matching system runtime packages;
-an AppImage and Windows installer remain future packaging work.
+The [M1 packaging instructions](docs/M1_ACCEPTANCE.md) cover the unsigned
+Windows x64 installer and Ubuntu 26.04 x86-64 AppImage. The separate Linux
+binary archive requires matching system runtime packages.
 
 The importer caps input at 10 million triangles; inspection uses exact shared
 coordinates and is memory-intensive. Research STL export does not imply
 manufacturability. Self-intersections, thickness, fit and clinical suitability
 are not checked. No restoration generation or tooth library is supplied yet.
-Alignment, margins, general self-intersection/non-manifold repair and professional
+General self-intersection/non-manifold repair and professional
 release gates remain planned. OBJ/PLY image textures and point clouds are not supported.
 Manual save remains synchronous; undo history is session-local and is not stored
 in project files. Patient data stays local; the program has no network services.
@@ -108,6 +112,9 @@ build-desktop/viewer_benchmark build-desktop/curved-stress.stl
 
 `zahncad --smoke-test input.stl screenshot.png` exercises cancellation, async
 import, undo/redo, scan removal/restore, navigation LOD and clean shutdown.
+With `examples/triangle.stl` it also checks surface measurement and clipping,
+then uses Recent Cases to reopen a saved two-scan project. It writes
+`screenshot.png.ruler.png` and `screenshot.png.zahncad` for that fixture.
 On Linux run it with `xvfb-run -a` if no display is available. The synthetic
 fixture is a curved plate, not dental anatomy; real scan performance still
 requires representative cases and workstation-specific evaluation.

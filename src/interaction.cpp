@@ -17,7 +17,12 @@ void InteractionStyle::setBrush(bool enabled){
 }
 void InteractionStyle::stamp(int x,int y){if(paint)paint(x,y,Interactor->GetShiftKey()!=0);}
 void InteractionStyle::OnLeftButtonDown(){
-  if(!brush_){Superclass::OnLeftButtonDown();return;}
+  if(!brush_){
+    const auto* position=Interactor->GetEventPosition();
+    if(State==VTKIS_NONE&&measure&&measure(position[0],position[1]))return;
+    Superclass::OnLeftButtonDown();
+    return;
+  }
   if(State!=VTKIS_NONE)return;auto* p=Interactor->GetEventPosition();FindPokedRenderer(p[0],p[1]);if(!CurrentRenderer)return;
   painting_=true;previousX_=p[0];previousY_=p[1];GrabFocus(EventCallbackCommand);stamp(p[0],p[1]);if(changed)changed();
 }

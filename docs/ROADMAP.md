@@ -18,12 +18,20 @@ milestone schedule, assuming 4–6 engineers and dental partners, is:
 These are estimates, not guarantees. Version 0.2 completes the first viewer
 reliability development batch: background loading/cancellation, undo/redo,
 display LOD, improved recovery, and verified Windows/Linux desktop builds.
-M1 still needs broader manual evaluation, installer/AppImage packaging and real
-scanner performance measurements. M0's external dental reviews and later gates
-are not completed by these software tests.
+M1 still needs broader manual evaluation and real scanner performance
+measurements. M0's external dental reviews and later gates are not completed
+by these software tests.
 
-Version 0.3 adds the second development batch: colored PLY/OBJ import,
-selection/cropping, component isolation, controlled repair, smoothing,
-simplification and sampled deviation reports. Projects preserve original and
-edited geometry. This does not complete the entire M2 milestone: registration,
-margin editing, insertion analysis and blockout remain next.
+- **M0 in progress.** The [research evaluation protocol](EVALUATION.md) sets
+  out the draft intended use and records the first synthetic geometry baseline.
+  Representative scans and an external review remain open.
+- **M1 software verified.** The viewer checks cover surface measurement,
+  two-scan persistence, and forced-close recovery with a damaged latest
+  snapshot. CI builds the Windows installer and Linux AppImage.
+  The [acceptance checklist](M1_ACCEPTANCE.md) tracks clean desktop checks and
+  representative performance runs.
+
+- **M2 software implemented.** Scan preparation includes reversible geometry
+  edits, rigid landmark registration, persistent margin editing, sampled
+  insertion analysis and directional blockout. M2 acceptance still needs
+  approved representative scans and reference measurements.

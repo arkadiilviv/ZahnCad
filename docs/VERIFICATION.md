@@ -106,3 +106,29 @@ Brush acceleration data is cached per current mesh and created in a worker.
 Large-scan brush interaction latency, pen/tablet devices and broader hardware
 depth-buffer behavior still require real-world testing. Control reference:
 `docs/CONTROLS.md` (F12 in the app).
+
+## M1 recovery and M2 scan analysis, 2026-11-18
+
+Windows x64 with an AMD Radeon RX 9070 and Ubuntu 26.04 x86-64 with Xvfb
+and software Mesa each passed all four CTest suites. The desktop recovery
+script wrote two snapshots, force-closed the process, and verified both
+latest and previous recovery after relaunch.
+
+The M2 desktop smoke traced and moved a margin point, picked three landmark
+pairs, applied registration, exercised undo and redo, and reopened the saved
+margin. It also previewed and saved a blockout. Analytic cases covered a known
+rigid rotation and translation, a 1 mm directional undercut, and a closed
+blockout envelope.
+
+- The rebuilt Windows installer and checksum are in `out/m2-windows/`.
+  A temporary installer with the same payload and a separate application ID
+  and shortcut passed the install, viewer, recovery, M2 and uninstall checks
+  with a Windows-only PATH. A packaged navigation run restored the full
+  five-million-triangle synthetic mesh.
+- The rebuilt AppImage and checksum are in `out/m2-linux/`. The packaged
+  viewer and M2 smoke tests passed in a separate Ubuntu runtime container
+  without Qt or VTK installed. Logs, screenshots and projects are beside it.
+
+The full clean-desktop walkthrough and evaluation on approved representative
+scanner exports remain open. See [M1 acceptance](M1_ACCEPTANCE.md) and
+[M2 acceptance](SCAN_PREPARATION.md#m2-acceptance).
