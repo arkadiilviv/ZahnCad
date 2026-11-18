@@ -1,0 +1,9 @@
+{
+  "name": "zahncad",
+  "version-string": "0.3.1",
+  "dependencies": [
+    {"name":"qtbase", "default-features":false, "features":["widgets","sql-sqlite"]},
+    {"name":"vtk", "default-features":false, "features":["qt"]},
+    "libarchive"
+  ]
+}

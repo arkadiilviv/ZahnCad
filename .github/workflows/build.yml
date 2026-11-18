@@ -1,0 +1,35 @@
+name: Native build
+on: [push, pull_request]
+jobs:
+  core:
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S . -B build -DBUILD_TESTING=ON
+      - run: cmake --build build --config Release
+      - run: ctest --test-dir build -C Release --output-on-failure
+  desktop-linux:
+    runs-on: ubuntu-latest
+    container: ubuntu:26.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install matching Qt6 and VTK development packages
+        run: apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends g++ cmake ninja-build qt6-base-dev libqt6sql6-sqlite libvtk9-qt-dev libarchive-dev xvfb xauth libgl1-mesa-dri
+      - run: cmake -S . -B build -G Ninja -DZAHNCAD_DESKTOP=ON -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build --parallel 2
+      - run: ctest --test-dir build --output-on-failure
+      - run: QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a build/zahncad --smoke-test "$PWD/examples/triangle.stl" "$PWD/build/smoke-linux.png"
+      - run: QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a build/zahncad --stage2-smoke-test "$PWD/examples/colored-scan.ply" "$PWD/build/preparation-linux.png"
+      - run: QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a build/zahncad --stage2-smoke-test "$PWD/examples/brush-test.ply" "$PWD/build/brush-linux.png"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-build-and-render-evidence
+          path: |
+            build/zahncad
+            build/zahncad-cli
+            build/smoke-linux.png
+            build/preparation-linux.png
+            build/brush-linux.png.brush.png

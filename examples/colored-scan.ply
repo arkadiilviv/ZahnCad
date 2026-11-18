@@ -1,0 +1,19 @@
+ply
+format ascii 1.0
+comment ZahnCAD synthetic color/precision fixture; no patient anatomy
+element vertex 4
+property double x
+property double y
+property double z
+property uchar red
+property uchar green
+property uchar blue
+element face 2
+property list uchar int vertex_indices
+end_header
+0.1234567890123 0 0 255 60 40
+10 0 0 40 255 80
+10 10 0 40 100 255
+0.1234567890123 10 0 255 220 50
+3 0 1 2
+3 0 2 3
