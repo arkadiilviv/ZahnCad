@@ -28,7 +28,7 @@ representative case and record the date, reviewer role, version, and outcome.
 | `examples/colored-scan.ply` | Vertex RGB, clipping and edited case persistence | Crop preserves color and leaves the original available after reopening |
 | `examples/brush-test.ply` | Brush visibility and navigation | A stroke on the front surface leaves hidden vertices unselected |
 | Generated curved stress STL | Import and display preparation throughput | Full source triangle count remains available after navigating with LOD |
-| Representative scanner exports | Units, formats, multiple scans, real geometry and performance | Pending authorized fixtures and reviewer expectations |
+| Public typodont scanner exports | Real arch and bite geometry, binary PLY, import and navigation | Windows smoke and CPU benchmark passed. Independent measurements and workflow review pending. |
 
 Prefer public, license-compatible or approved de-identified fixtures. Store
 representative case files outside the repository. Keep an inventory with a case
@@ -48,7 +48,8 @@ python scripts/evaluate_m0.py build-desktop out/m0-evidence
 ```
 
 The runner checks the triangle's topology and scaled binary STL roundtrip,
-benchmarks all four synthetic fixtures, and runs the desktop smoke checks.
+benchmarks all four synthetic fixtures, and runs the desktop smoke checks,
+including the reference measurement CSV and case reopening.
 It saves synthetic screenshots and reopened edited cases in the output
 directory. The generated stress STL occupies approximately 250 MB during
 the run.
@@ -88,7 +89,31 @@ geometric feasibility for these fixtures. Manual ruler placement, scanner
 accuracy, representative geometry, and presented frame rates remain open.
 [Verification record](VERIFICATION.md)
 
-## First representative case
+### Public typodont import and navigation, 2026-11-19
+
+Luo Meng's [Dental Scan dataset](https://github.com/UMP-45/dental-scan-geometry/tree/757df2ab4c83b8093fe10e281bdf1bb0fab80e46)
+provides scans of a plastic training model under CC BY 4.0. The source reports
+millimetres for its mesh measurements. We used scale 1 for this smoke run.
+The archive was fetched at the linked revision. Its SHA-256 is
+`0f090f162ee05fb2f8d5fee20747b45f14a9708c0b2ec331a2efa5e24f8abf5a`.
+
+Windows x64, ZahnCAD 0.3.1. Timings are medians of three CPU benchmark runs
+per binary PLY. File cache state was uncontrolled.
+
+| Source path under `scan_date/scan/` | Triangles | Navigation triangles | Import (ms) | Display preparation (ms) |
+|---|---:|---:|---:|---:|
+| `step1_type12_mesh3/applied.ply` (upper) | 379,985 | 44,134 | 132 | 52 |
+| `step2_type12_mesh5/applied.ply` (lower) | 361,663 | 40,337 | 125 | 48 |
+| `step0_type1_mesh1/raw.ply` (bite) | 1,314,992 | 12,344 | 433 | 135 |
+
+The packaged viewer imported each file in a separate run, rendered it,
+and restored all source triangles after navigation. Artifacts are in
+`out/m0-typodont/`. These runs did not measure displayed frame rates or
+multi-scan alignment. The source's mesh-derived dimensions are suitable for
+comparison against the exported geometry. An independent landmark reference
+is still needed to evaluate physical measurement accuracy and repeatability.
+
+## First representative measurement case
 
 Prefer a scan of a physical training model or typodont. Start with an upper or
 lower arch, its scanner/export settings and units, and one independently
@@ -112,14 +137,25 @@ bite record are useful for evaluating case roles if available.
    its confirmed scale and role. Compare the standard views and the relative
    placement of the scans to the expected orientation. Inspect the geometry
    of each scan and record bounds and any unexpected topology findings.
-3. Toggle visibility to isolate the scan of interest. Turn on the ruler with
-   M and measure the agreed endpoints. Record the reading, subtract the
-   independent reference, and compare the absolute difference with the agreed
-   tolerance. Record whether endpoint placement could be repeated.
-4. Use X to inspect a region with the crop box. If testing a crop, apply it
-   to the working copy and retain both reference landmarks. Save, reopen, and
-   confirm the listed roles, visible geometry, and original scan availability.
-   Place a fresh ruler at the reference endpoints and record the result.
+3. Open **Analyze → Set up reference measurement**. Enter the two landmark
+   descriptions, independent reference method, distance and agreed tolerance in
+   millimetres. One reference is stored per case. The setup fields lock after
+   the first recorded reading, and reviewer notes remain editable.
+4. Isolate the original scan. Press M and pick both landmarks, then choose
+   **Analyze → Record ruler reading**. Repeat the picks for each attempt. The
+   status bar reports the signed error, tolerance result and the range of
+   recorded readings. The tool checks source identity and import scale across
+   attempts.
+5. Save and reopen the case, then take another reading. The report labels
+   readings taken after opening a saved case with a reference. Use **Analyze →
+   Export reference CSV** for the reviewer record. Use X to inspect a crop on
+   a working copy. Take comparison readings on the original geometry.
+
+To replay the Windows synthetic measurement test, run
+`zahncad --m0-reference-smoke-test examples/triangle.stl screenshot.png`.
+It measures a known 5 mm span on the synthetic fixture, saves and reopens the
+case, repeats the measurement, and exports a deliberately shorter reading to
+exercise the outside-tolerance result.
 
 ## Intended-use assessment
 
@@ -132,8 +168,9 @@ or manufacturing require separate evidence and tools. Record any changes to
 this assessment after the dental workflow review.
 
 M0 closes when the workflow review, authorized corpus, geometry feasibility
-findings, and intended-use assessment are recorded. The synthetic baseline is
-recorded. Reviewer input, an authorized representative scan with an independent
-reference, and the resulting measurements remain open.
+findings, and intended-use assessment are recorded. The synthetic baseline and
+initial typodont import and navigation checks are recorded. Reviewer input,
+an independent reference for a representative scan, and the resulting
+measurements remain open.
 
 The same synthetic fixtures support the [M1 viewer and packaging checks](M1_ACCEPTANCE.md).

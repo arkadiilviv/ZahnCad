@@ -56,13 +56,13 @@ manufacturing or clinical suitability.
 
 ## Registration, margins, and insertion
 
-- Select the moving scan and choose **Prepare scan → Register using landmarks**.
+- Select the moving scan and choose **Scan → Register using landmarks**.
   Choose the fixed scan. Pick three well-separated, non-collinear matching
   landmarks on each scan in the same order. Review the preview and landmark
   residuals before applying. The transform preserves scale and vertex colors
   and moves any saved margin with the scan. Inspect alignment away from the
   three landmarks.
-- Choose **Prepare scan → Margin → Trace or edit margin** on a visible scan.
+- Choose **Design → Trace or edit margin** on a visible scan.
   Click to add points. Shift+click near a point to move it. Remove the last
   draft point or press Escape to discard edits. **Apply margin** saves a
   closed polyline with straight segments between the picked surface points.
@@ -94,3 +94,36 @@ before testing. Compare registration against independent landmarks excluded
 from the fit. Repeat the margin trace and record the observed displacement.
 Compare insertion results with an independently identified undercut, and rerun
 blockout at two grid spacings to record changes in its bounds and surface.
+
+## M3 tooth markup and research crowns
+
+1. Select a visible preparation scan. Open **Design → Select tooth markup**
+   and choose a permanent tooth from the FDI chart. The scene shows the chosen
+   number next to the scan and its saved margin. Reopen the chart to change or
+   clear the assignment. Each scan stores one assignment and one margin.
+2. Trace and apply a margin around the tooth. For this prototype, trace the
+   points in order so the outline is convex when viewed along the insertion
+   direction. Rotate the view to look along that direction before generating.
+3. Choose **Design → Build research crown**, enter a height above the highest
+   margin point and inspect the preview. **Apply** adds a separate restoration
+   candidate. Changing the scan or margin afterward leaves that candidate as
+   built. Generate a fresh candidate after adjusting the preparation.
+
+The prototype uses a tapered wall and a recessed underside with a flat roof.
+The geometry has no tooth-specific anatomy. Fit, material thickness, occlusion
+and manufacturing suitability remain outside this prototype's checks.
+
+### Bench measurements
+
+Import a candidate with the **Restoration candidate** role and confirm its units
+and alignment with the case. Select it in the scene and use **Analyze → Measure
+surface separation** to choose a second surface. The report gives the smallest
+sampled unsigned distance in millimetres, the two endpoint coordinates in the
+case coordinate system, and the number of queries across both meshes.
+
+The tool checks vertices and centroids from up to 25,000 triangles per direction
+against the full opposite surface, regardless of visibility, clipping or display
+detail. Samples can miss a closer area or an intersection. Use the result as a
+research measurement and compare it against an independent reference when
+evaluating physical samples. The desktop smoke above also checks a synthetic
+2 mm offset and verifies that the candidate role survives reopening the case.

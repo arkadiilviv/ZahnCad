@@ -171,10 +171,66 @@ Mesh processSurface(const Mesh& input,const Parameters& params,const Checkpoint&
   if(params.operation==Operation::Simplify){if(!std::isfinite(params.value)||params.value<=0||params.value>=1)throw std::runtime_error("Reduction must be between 0 and 1");vtkNew<vtkDecimatePro> filter;filter->SetInputData(data);filter->SetTargetReduction(params.value);filter->PreserveTopologyOn();filter->BoundaryVertexDeletionOff();filter->SplittingOff();filter->SetOutputPointsPrecision(vtkAlgorithm::DOUBLE_PRECISION);updateAlgorithm(filter,check);return fromPolyData(filter->GetOutput(),check);}
   throw std::runtime_error("Unsupported surface operation");
 }
-Deviation deviation(const Mesh& before,const Mesh& after,const Checkpoint& check){
-  if(before.triangles.empty()||after.triangles.empty())throw std::runtime_error("Deviation requires two nonempty surfaces");Deviation result;double squared=0;
-  auto measure=[&](const Mesh& from,const Mesh& to){vtkNew<vtkStaticCellLocator> locator;locator->SetDataSet(toPolyData(to,check));locator->BuildLocator();tick(check);size_t stride=std::max(size_t(1),(from.triangles.size()+24999)/25000);
-    for(size_t i=0;i<from.triangles.size();i+=stride){tick(check);auto v=from.triangles[i].v;Vec3 center{(v[0].x+v[1].x+v[2].x)/3,(v[0].y+v[1].y+v[2].y)/3,(v[0].z+v[1].z+v[2].z)/3};for(auto p:{v[0],v[1],v[2],center}){double point[3]{p.x,p.y,p.z},closest[3]{},distance=std::numeric_limits<double>::infinity();vtkIdType cell=-1;int sub=-1;locator->FindClosestPoint(point,closest,cell,sub,distance);if(cell<0||!std::isfinite(distance)||distance<0)throw std::runtime_error("Deviation query failed");squared+=distance;result.maximum=std::max(result.maximum,std::sqrt(distance));++result.samples;}}
-  };measure(before,after);measure(after,before);result.rms=std::sqrt(squared/double(result.samples));return result;
+namespace {
+template<class Visit>
+void visitSampleDistances(const Mesh& from,const Mesh& to,const Checkpoint& check,Visit visit) {
+  vtkNew<vtkStaticCellLocator> locator;
+  locator->SetDataSet(toPolyData(to,check));
+  locator->BuildLocator();
+  tick(check);
+  constexpr size_t maxFaces=25000;
+  // ponytail: fixed-stride sampling caps queries, but can miss features between samples.
+  const size_t stride=(from.triangles.size()+maxFaces-1)/maxFaces;
+  for(size_t i=0;i<from.triangles.size();i+=stride){
+    tick(check);
+    const auto& [a,b,c]=from.triangles[i].v;
+    const Vec3 center{(a.x+b.x+c.x)/3,(a.y+b.y+c.y)/3,(a.z+b.z+c.z)/3};
+    for(auto p:{a,b,c,center}){
+      double point[3]{p.x,p.y,p.z},closest[3]{};
+      double squared=std::numeric_limits<double>::infinity();
+      vtkIdType cell=-1;
+      int sub=-1;
+      locator->FindClosestPoint(point,closest,cell,sub,squared);
+      if(cell<0||!std::isfinite(squared)||squared<0)
+        throw std::runtime_error("Closest surface point query failed");
+      visit(p,Vec3{closest[0],closest[1],closest[2]},squared);
+    }
+  }
+}
+}
+Deviation deviation(const Mesh& before,const Mesh& after,const Checkpoint& check) {
+  if(before.triangles.empty()||after.triangles.empty())
+    throw std::runtime_error("Deviation requires two nonempty surfaces");
+  Deviation result;
+  double sum=0;
+  auto record=[&](Vec3,Vec3,double squared){
+    sum+=squared;
+    result.maximum=std::max(result.maximum,std::sqrt(squared));
+    ++result.samples;
+  };
+  visitSampleDistances(before,after,check,record);
+  visitSampleDistances(after,before,check,record);
+  result.rms=std::sqrt(sum/double(result.samples));
+  return result;
+}
+SampledSeparation sampledSeparation(const Mesh& first,const Mesh& second,const Checkpoint& check) {
+  if(first.triangles.empty()||second.triangles.empty())
+    throw std::runtime_error("Separation requires two nonempty surfaces");
+  SampledSeparation result;
+  double bestSquared=std::numeric_limits<double>::infinity();
+  auto record=[&](Vec3 onFirst,Vec3 onSecond,double squared){
+    if(squared<bestSquared){
+      bestSquared=squared;
+      result.onFirst=onFirst;
+      result.onSecond=onSecond;
+    }
+    ++result.samples;
+  };
+  visitSampleDistances(first,second,check,record);
+  visitSampleDistances(second,first,check,[&](Vec3 from,Vec3 to,double squared){
+    record(to,from,squared);
+  });
+  result.minimum=std::sqrt(bestSquared);
+  return result;
 }
 }

@@ -132,3 +132,57 @@ blockout envelope.
 The full clean-desktop walkthrough and evaluation on approved representative
 scanner exports remain open. See [M1 acceptance](M1_ACCEPTANCE.md) and
 [M2 acceptance](SCAN_PREPARATION.md#m2-acceptance).
+
+## M3 research bench increment, 2026-11-18
+
+The Windows Release build passed all four CTest suites. The synthetic M0 runner
+passed scale and binary STL checks and all four desktop smoke runs, including
+restoration of the full five-million-triangle mesh after navigation. Both the
+build and packaged app recovered the latest autosave and fell back to the
+previous snapshot when the latest was damaged.
+
+The packaged app passed the viewer, crop, brush, registration, margin and
+blockout smoke checks with a Windows-only PATH. The analysis smoke also verified
+2 mm separation between parallel meshes and reopened a case with the
+Restoration candidate role intact. The surface suite checks coincident surfaces,
+empty input and endpoint assignment when the minimum comes from the reverse
+sampling pass.
+
+The runnable app and unsigned Inno Setup installer were rebuilt. Local evidence
+is in `out/milestone-check-1a9e5315/`. Clean-account installation and manual
+walkthrough, external review, representative scans and physical bench
+measurements remain open.
+
+## M3 tooth markup and crown prototype, 2026-11-19
+
+The Windows Release build passed all four CTest suites. Surface tests covered
+closed crown geometry with a nonplanar margin, reversed point order, rejection
+of crossing and concave outlines, and recovery of a version 4 case with both
+imported and generated geometry after damage to its newest snapshot.
+
+The M0 synthetic run passed, including restoration of the full five-million-
+triangle surface after navigation. The packaged Windows app passed the M1
+viewer and forced-close recovery checks, as well as the M2 crop, brush,
+registration, margin and blockout checks, with a Windows-only PATH.
+
+The packaged M3 smoke selected tooth 16 using the FDI chart, verified markup
+undo/redo and the upper-jaw filter, and generated a separate closed crown from
+the registered margin after undoing blockout. It undid and redid the crown,
+reopened the saved case and measured contact at its synthetic margin plane.
+Screenshots and cases are in `out/m3-verification/packaged/`. The unsigned
+Windows installer was rebuilt. Linux execution, clean-account installer
+testing and evaluation on representative scans remain open for this increment.
+
+## M0 reference measurement workflow, 2026-11-19
+
+The Windows Release build passed all four CTest suites. Against the known
+5 mm synthetic span, the desktop smoke recorded a reading before save, reopened
+the case, and recorded two more readings. The repeated pick measured about
+4.993 mm both times. A deliberately shortened pick exercised the
+outside-tolerance result. The CSV records the phase, signed error, range,
+scan fingerprint, import scale and software version for the review record.
+
+The packaged Windows app passed the reference test, public typodont import and
+navigation, M1 viewer and recovery, M2 preparation, and M3 crown smokes.
+Evidence is in `out/m0-reference/`. Independent reference measurements on a
+physical model and external workflow review remain open.

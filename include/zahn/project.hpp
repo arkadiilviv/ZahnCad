@@ -5,6 +5,7 @@
 #include <QJsonArray>
 #include <vector>
 #include <memory>
+#include <optional>
 namespace zahn {
 struct Scan {
   QString name, role;
@@ -17,8 +18,27 @@ struct Scan {
   std::shared_ptr<const Mesh> sourceMesh;
   QJsonArray operations;
   std::vector<Vec3> margin;
+  int toothFdi=0;
 };
-struct Project { QString id="Untitled case"; std::vector<Scan> scans; };
+struct ReferenceReading {
+  QString scanName, scanRole, sourceSha256, appVersion, platform, capturedUtc;
+  double scaleToMm{}, measuredMm{};
+  bool afterReopen{};
+};
+struct ReferenceMeasurement {
+  static constexpr size_t readingLimit=200;
+  QString landmarks, method, notes;
+  double expectedMm{}, toleranceMm{};
+  std::vector<ReferenceReading> readings;
+};
+struct Project {
+  QString id="Untitled case";
+  std::vector<Scan> scans;
+  std::optional<ReferenceMeasurement> reference;
+};
+inline bool validToothFdi(int tooth) {
+  return tooth>=11&&tooth<=48&&tooth%10>=1&&tooth%10<=8;
+}
 void saveProject(const Project&,const QString&);
 Project loadProject(const QString&, const Checkpoint& checkpoint = {});
 std::filesystem::path nativePath(const QString&);

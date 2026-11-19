@@ -16,9 +16,9 @@ public:
 void Document::reset(Project value, bool recovered) {
   history.clear(); project = std::move(value); recovered_ = recovered; history.setClean();
 }
-void Document::addScan(Scan scan) {
+void Document::addScan(Scan scan, QString label) {
   if(!scan.mesh) throw std::runtime_error("Scan geometry is missing");
-  history.push(new Edit("Import scan", [this,scan]{project.scans.push_back(scan);},
+  history.push(new Edit(label, [this,scan]{project.scans.push_back(scan);},
     [this]{project.scans.pop_back();}));
 }
 void Document::removeScan(size_t index) {
@@ -36,5 +36,9 @@ void Document::setDisplay(size_t index, bool visible, double opacity) {
 void Document::replaceScan(size_t index,Scan scan,QString label){
   if(!scan.mesh)throw std::runtime_error("Edited geometry is missing");auto before=project.scans.at(index);
   history.push(new Edit(label,[this,index,scan]{project.scans.at(index)=scan;},[this,index,before]{project.scans.at(index)=before;}));
+}
+void Document::setReference(ReferenceMeasurement reference,QString label){
+  auto before=project.reference;
+  history.push(new Edit(label,[this,reference]{project.reference=reference;},[this,before]{project.reference=before;}));
 }
 }

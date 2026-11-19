@@ -1,6 +1,7 @@
 """Run the M0 synthetic baseline with a desktop build and a working display."""
 
 import argparse
+import csv
 import os
 from pathlib import Path
 import subprocess
@@ -76,6 +77,27 @@ def evaluate(build, evidence):
                         f"Missing evidence: {artifact.name}")
                 artifact.replace(evidence / artifact.name)
             print(f"{fixture.name}: desktop smoke passed")
+
+        screenshot = scratch / "reference.png"
+        run(desktop, "--m0-reference-smoke-test", triangle, screenshot)
+        report = Path(f"{screenshot}.csv")
+        with report.open(encoding="utf-8", newline="") as stream:
+            readings = list(csv.DictReader(stream))
+        require([row["phase"] for row in readings] ==
+                ["initial_session", "after_reopen", "after_reopen"], "Wrong reference phases")
+        require([row["within_tolerance"] for row in readings] == ["yes", "yes", "no"],
+                "Wrong reference tolerance results")
+        measured = [float(row["measured_mm"]) for row in readings]
+        for row, distance in zip(readings, measured):
+            require(abs(float(row["error_mm"]) - (distance - 5)) < 1e-9 and
+                    abs(float(row["repeat_spread_mm"]) - (max(measured) - min(measured))) < 1e-9 and
+                    row["reviewer_notes"] == "'=Synthetic, \"control\"",
+                    "Wrong reference CSV values or escaping")
+        for artifact in (screenshot, report, Path(f"{screenshot}.zahncad")):
+            require(artifact.is_file() and artifact.stat().st_size > 0,
+                    f"Missing evidence: {artifact.name}")
+            artifact.replace(evidence / artifact.name)
+        print("Reference measurement: CSV and reopened case passed")
 
     print(f"M0 synthetic baseline passed. Evidence: {evidence}")
 

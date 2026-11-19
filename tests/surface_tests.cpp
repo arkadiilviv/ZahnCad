@@ -8,10 +8,65 @@
 #include <QDataStream>
 #include <archive.h>
 #include <archive_entry.h>
+#include <algorithm>
 #include <fstream>
 #include <cmath>
 #include <iostream>
 void require(bool value,const char* why){if(!value)throw std::runtime_error(why);}
+void checkResearchCrown(zahn::Scan preparation) {
+  std::vector<zahn::Vec3> outline{{0,0,0},{4,0,1},{4,4,0},{0,4,0}};
+  auto mesh=std::make_shared<const zahn::Mesh>(zahn::researchCrown(outline,{0,0,1},5));
+  auto report=zahn::inspect(*mesh);
+  require(report.closed()&&report.triangles==32&&report.maximum.z==6,"Crown topology and height");
+  std::reverse(outline.begin(),outline.end());
+  require(zahn::inspect(zahn::researchCrown(outline,{0,0,1},5)).closed(),"Reversed crown margin rejected");
+  auto crosses=outline;
+  std::swap(crosses[1],crosses[2]);
+  for(const auto& invalid:{crosses,std::vector<zahn::Vec3>{{0,0,0},{4,0,0},{1,1,0},{4,4,0},{0,4,0}}}){
+    bool rejected=false;
+    try{zahn::researchCrown(invalid,{0,0,1},5);}catch(const std::runtime_error&){rejected=true;}
+    require(rejected,"Crossing or concave crown margin accepted");
+  }
+
+  preparation.toothFdi=16;
+  preparation.margin=outline;
+  zahn::Scan crown;
+  crown.toothFdi=16;
+  crown.format="zmesh";
+  crown.role="Restoration candidate";
+  crown.sourceMesh=mesh;
+  zahn::RigidAlignment move;
+  move.matrix={1,0,0,1,0,1,0,0,0,0,1,0,0,0,0,1};
+  crown.mesh=std::make_shared<const zahn::Mesh>(zahn::transformMesh(*mesh,move));
+  QTemporaryDir recovery;
+  zahn::Project project{"Crown",{crown,preparation}};
+  zahn::saveRecovery(project,recovery.path());
+  zahn::saveRecovery({"Second",{preparation}},recovery.path());
+  QFile damaged(recovery.filePath("recovery.zahncad"));
+  require(damaged.open(QIODevice::WriteOnly)&&damaged.write("broken")==6,"Damage recovery fixture");
+  damaged.close();
+  auto reopened=zahn::loadRecovery(recovery.path());
+  const auto& restored=reopened.scans.at(0);
+  require(reopened.id=="Crown"&&restored.toothFdi==16&&reopened.scans.at(1).margin.size()==4&&
+    zahn::inspect(*restored.mesh).minimum.x==1&&zahn::inspect(*restored.sourceMesh).minimum.x==0,
+    "Version 4 mixed-case recovery lost markup or generated meshes");
+}
+void checkSampledSeparation() {
+  zahn::Mesh large,small;
+  large.triangles.push_back({{{{0,0,0},{12,0,0},{0,12,0}}}});
+  small.triangles.push_back({{{{1,1,2},{2,1,2},{1,2,2}}}});
+  // The closest sampled point must come from the reverse pass.
+  const auto report=zahn::sampledSeparation(large,small);
+  require(std::abs(report.minimum-2)<1e-9&&report.samples==8,"Sampled separation distance and count");
+  require(report.onFirst.z==0&&report.onSecond.z==2&&
+          std::hypot(report.onFirst.x-report.onSecond.x,report.onFirst.y-report.onSecond.y)<1e-9,
+          "Sampled separation endpoints belong to the reported surfaces");
+  require(zahn::sampledSeparation(large,large).minimum==0,"Coincident surface separation");
+  bool rejected=false;
+  try{zahn::sampledSeparation(large,{});}
+  catch(const std::runtime_error&){rejected=true;}
+  require(rejected,"Sampled separation accepted an empty surface");
+}
 void checkPreparation(zahn::Scan scan,const QTemporaryDir& directory) {
   const zahn::LandmarkTriplet moving{{{0,0,0},{2,0,0},{0,2,0}}};
   const zahn::LandmarkTriplet fixed{{{5,6,7},{5,8,7},{3,6,7}}};
@@ -73,6 +128,8 @@ int main(int argc,char** argv){QCoreApplication app(argc,argv);try{
   auto obj=write("colored.obj","v 0 0 0 1 0 0\nv 2 0 0 0 1 0\nv 0 2 0 0 0 1\nf -3 -2 -1\n");
   auto scan=zahn::importScan(obj,"Upper jaw",1);require(scan.mesh->colors.size()==1&&scan.mesh->colors[0][0][0]==255,"OBJ color import");
   checkPreparation(scan,directory);
+  checkSampledSeparation();
+  checkResearchCrown(scan);
   auto legacy=[&](int version){QByteArray buffer(8192,'\0');size_t used=0;auto* writer=archive_write_new();archive_write_set_format_zip(writer);require(archive_write_open_memory(writer,buffer.data(),buffer.size(),&used)==ARCHIVE_OK,"Legacy fixture ZIP");
     auto entry=[&](const char* name,QByteArray bytes){auto* item=archive_entry_new();archive_entry_set_pathname(item,name);archive_entry_set_size(item,bytes.size());archive_entry_set_filetype(item,AE_IFREG);archive_entry_set_perm(item,0600);require(archive_write_header(writer,item)==ARCHIVE_OK,"Legacy fixture header");archive_entry_free(item);require(archive_write_data(writer,bytes.data(),bytes.size())==bytes.size(),"Legacy fixture data");};
     entry("scan.stl","solid test\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid test\n");entry("manifest.json",QByteArray("{\"format\":\"ZahnCAD\",\"version\":")+QByteArray::number(version)+",\"units\":\"mm\",\"caseId\":\"legacy\",\"scans\":[{\"name\":\"Legacy\",\"role\":\"Upper jaw\",\"source\":\"scan.stl\",\"scaleToMm\":2,\"visible\":true,\"opacity\":1}]}" );require(archive_write_close(writer)==ARCHIVE_OK,"Legacy fixture close");archive_write_free(writer);buffer.resize(qsizetype(used));return write("legacy.zip",buffer);};

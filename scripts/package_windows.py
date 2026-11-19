@@ -42,7 +42,8 @@ while queue:
     'B: vertex brush. Left-drag paints, Shift+left erases. Right-drag orbits, Shift+right pans, wheel zooms.\n'
     'F12 opens all camera/tool hotkeys.\n'
     'Use Prepare scan for selection, cropping, components, repairs, smoothing and simplification.\n'
-    'Restoration generation and manufacturing validation are pending.\n',
+    'Use Design to select a tooth, trace its margin and build a research crown prototype.\n'
+    'Anatomical design and manufacturing validation are pending.\n',
     encoding='utf-8')
 for name in ('LICENSE', 'NOTICE'):
     shutil.copy2(name, output / name)

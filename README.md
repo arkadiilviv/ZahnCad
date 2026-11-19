@@ -36,6 +36,8 @@ See [M0 research evaluation](docs/EVALUATION.md) and
   geometry edits are undoable. Projects retain source and edited meshes.
 - Three-landmark rigid registration, editable saved margin traces, sampled
   insertion analysis and directional blockout.
+- Permanent-tooth FDI markup and a hollow research crown prototype from a saved
+  convex margin. Generated crowns are separate restoration candidates.
 
 See [scan-preparation instructions and limits](docs/SCAN_PREPARATION.md).
 See [keyboard and mouse controls](docs/CONTROLS.md), also available with F12.
@@ -94,7 +96,7 @@ binary archive requires matching system runtime packages.
 The importer caps input at 10 million triangles; inspection uses exact shared
 coordinates and is memory-intensive. Research STL export does not imply
 manufacturability. Self-intersections, thickness, fit and clinical suitability
-are not checked. No restoration generation or tooth library is supplied yet.
+are not checked. Anatomical crown generation and the tooth library remain open.
 General self-intersection/non-manifold repair and professional
 release gates remain planned. OBJ/PLY image textures and point clouds are not supported.
 Manual save remains synchronous; undo history is session-local and is not stored
@@ -124,5 +126,9 @@ actual face picking, crop-box bounds, async cropping, undo/redo, color rendering
 and edited-project persistence. It writes `screenshot.png.zahncad` as a synthetic
 interoperability fixture. Automated preparation is enabled only by this explicit
 test argument; interactive operations always offer Apply/Cancel.
+
+`zahncad --m3-smoke-test examples/colored-scan.ply screenshot.png` exercises the
+FDI chart, margin editing, registration, blockout undo, crown generation,
+project reopening and sampled separation on the synthetic case.
 
 See [development roadmap](docs/ROADMAP.md) and [project format](docs/FORMAT.md).

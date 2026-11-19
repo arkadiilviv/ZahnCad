@@ -9,6 +9,9 @@
 #include <QKeySequence>
 #include <QJsonObject>
 #include <QDateTime>
+#include <QCryptographicHash>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QJsonArray>
 #include <QApplication>
 #include <QSurfaceFormat>
@@ -18,12 +21,22 @@
 #include <QMessageBox>
 #include <QMenuBar>
 #include <QStatusBar>
-#include <QDockWidget>
+#include <QButtonGroup>
+#include <QComboBox>
+#include <QFormLayout>
+#include <QGridLayout>
 #include <QListWidget>
+#include <QLocale>
+#include <QPushButton>
+#include <QScrollArea>
 #include <QSlider>
-#include <QToolBar>
+#include <QStackedWidget>
+#include <QStyleFactory>
+#include <QTabWidget>
+#include <QToolButton>
 #include <QTimer>
 #include <QStandardPaths>
+#include <QSysInfo>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -53,6 +66,8 @@
 #include <vtkRenderer.h>
 #include <vtkPolyDataMapper.h>
 #include <vtkActor.h>
+#include <vtkAxesActor.h>
+#include <vtkOrientationMarkerWidget.h>
 #include <vtkProperty.h>
 #include <vtkCamera.h>
 #include <vtkPlane.h>
@@ -61,6 +76,7 @@
 #include <vtkCallbackCommand.h>
 #include <vtkRenderWindowInteractor.h>
 #include <vtkNew.h>
+#include <vtkWeakPointer.h>
 #include <vtkCellPicker.h>
 #include <vtkBoxWidget2.h>
 #include <vtkBoxRepresentation.h>
@@ -71,13 +87,92 @@
 #include <map>
 #include <optional>
 
-enum class SmokeMode { None, Viewer, Preparation, Analysis, RecoveryWrite, RecoveryRead };
+enum class SmokeMode { None, Viewer, Preparation, Analysis, Crown, Reference, RecoveryWrite, RecoveryRead };
+
+static void styleWorkbench(QApplication& app) {
+  app.setStyle(QStyleFactory::create("Fusion"));
+  QPalette palette=app.palette();
+  palette.setColor(QPalette::Window,QColor("#151A21"));
+  palette.setColor(QPalette::Base,QColor("#151A21"));
+  palette.setColor(QPalette::AlternateBase,QColor("#242C36"));
+  palette.setColor(QPalette::Button,QColor("#242C36"));
+  palette.setColor(QPalette::WindowText,QColor("#E5EBF0"));
+  palette.setColor(QPalette::Text,QColor("#E5EBF0"));
+  palette.setColor(QPalette::ButtonText,QColor("#E5EBF0"));
+  palette.setColor(QPalette::ToolTipBase,QColor("#242C36"));
+  palette.setColor(QPalette::ToolTipText,QColor("#E5EBF0"));
+  palette.setColor(QPalette::Highlight,QColor("#38C9B8"));
+  palette.setColor(QPalette::HighlightedText,QColor("#151A21"));
+  palette.setColor(QPalette::Disabled,QPalette::Text,QColor("#8995A3"));
+  palette.setColor(QPalette::Disabled,QPalette::ButtonText,QColor("#8995A3"));
+  palette.setColor(QPalette::Disabled,QPalette::WindowText,QColor("#8995A3"));
+  app.setPalette(palette);
+  app.setStyleSheet(R"(
+    QMenuBar { background: #242C36; border-bottom: 1px solid #343F4B; padding: 3px 7px; }
+    QMenuBar::item { background: transparent; padding: 5px 9px; }
+    QMenuBar::item:selected, QMenu::item:selected { background: #38C9B8; color: #151A21; }
+    QMenu { background: #242C36; border: 1px solid #343F4B; padding: 4px; }
+    QMenu::item { padding: 6px 28px 6px 22px; }
+    QMenu::separator { background: #343F4B; height: 1px; margin: 4px 8px; }
+    QFrame[panel="true"], QTabWidget::pane {
+      background: #242C36; border: 1px solid #343F4B; border-radius: 9px;
+    }
+    QFrame#viewportFrame { background: #151A21; }
+    QLabel[heading="true"] { font-weight: 600; font-size: 14px; }
+    QLabel[muted="true"] { color: #AEBBC8; }
+    QPushButton, QToolButton, QComboBox {
+      background: #242C36; border: 1px solid #343F4B; border-radius: 6px;
+      padding: 6px 9px;
+    }
+    QPushButton:hover:enabled, QToolButton:hover:enabled, QComboBox:hover:enabled { background: #303B48; }
+    QPushButton:focus, QToolButton:focus, QComboBox:focus,
+    QListWidget:focus { border: 1px solid #38C9B8; }
+    QToolButton:checked, QToolButton[primary="true"]:enabled {
+      background: #38C9B8; border-color: #38C9B8; color: #151A21; font-weight: 600;
+    }
+    QToolButton[primary="true"]:hover:enabled { background: #64D7C9; }
+    QPushButton[stage="true"] { padding: 0; border-radius: 8px; }
+    QPushButton[stage="true"]:checked {
+      background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #205650, stop:1 #21746A);
+      border-color: #38C9B8;
+    }
+    QLabel[stageNumber="true"] {
+      border: 1px solid #8995A3; border-radius: 14px; color: #AEBBC8;
+      font-size: 16px; font-weight: 600;
+    }
+    QPushButton[stage="true"]:checked QLabel[stageNumber="true"] {
+      border-color: #A1F3E9; color: #E5EBF0;
+    }
+    QPushButton[stage="true"]:checked QLabel[muted="true"] { color: #D2EFEB; }
+    QPushButton[tooth="true"]:checked { background: #185D57; border: 1px solid #38C9B8; }
+    QPushButton[tooth="true"]:disabled { color: #778491; background: #1C232B; }
+    QListWidget {
+      background: #151A21; border: 1px solid #343F4B; border-radius: 6px; outline: 0;
+      padding: 3px;
+    }
+    QListWidget::item { padding: 7px 5px; border-radius: 4px; }
+    QListWidget::item:hover { background: #303B48; }
+    QListWidget::item:selected { background: #205650; color: #E5EBF0; }
+    QTabBar::tab { padding: 9px 13px; color: #AEBBC8; border-bottom: 2px solid transparent; }
+    QTabBar::tab:selected { color: #E5EBF0; border-bottom-color: #38C9B8; font-weight: 600; }
+    QSlider::groove:horizontal { height: 4px; background: #343F4B; border-radius: 2px; }
+    QSlider::sub-page:horizontal { background: #38C9B8; border-radius: 2px; }
+    QSlider::handle:horizontal {
+      background: #38C9B8; border: 2px solid #E5EBF0; width: 10px; margin: -5px 0; border-radius: 7px;
+    }
+    QSlider::handle:horizontal:disabled { background: #343F4B; border-color: #8995A3; }
+    QStatusBar { background: #242C36; border-top: 1px solid #343F4B; min-height: 26px; }
+    QStatusBar::item { border: none; }
+    QStatusBar QLabel { padding: 0 8px; }
+  )");
+}
+
 class BrushOverlay : public QWidget {
 public:
   QPointF center;double radius=30;bool active=false,inside=false,erase=false;
   explicit BrushOverlay(QWidget* parent):QWidget(parent){setAttribute(Qt::WA_TransparentForMouseEvents);setAttribute(Qt::WA_TranslucentBackground);}
 protected:
-  void paintEvent(QPaintEvent*) override {if(!active||!inside)return;QPainter painter(this);painter.setRenderHint(QPainter::Antialiasing);QColor color=erase?QColor(80,190,255):QColor(255,140,30);painter.setPen(QPen(color,2));color.setAlpha(20);painter.setBrush(color);painter.drawEllipse(center,radius,radius);}
+  void paintEvent(QPaintEvent*) override {if(!active||!inside)return;QPainter painter(this);painter.setRenderHint(QPainter::Antialiasing);QColor color=erase?QColor(255,140,30):QColor("#38C9B8");painter.setPen(QPen(color,2));color.setAlpha(28);painter.setBrush(color);painter.drawEllipse(center,radius,radius);}
 };
 class Window : public QMainWindow {
   zahn::Document document;
@@ -85,15 +180,23 @@ class Window : public QMainWindow {
   const SmokeMode smokeMode;
   QListWidget* scans;
   QSlider* opacity;
-  QToolBar* tools;
+  QWidget* workbench;
+  QListWidget* margins;
+  QLabel *scanHeading, *marginHeading, *cornersLabel, *trianglesLabel, *sizeLabel;
+  QLabel *activeToolLabel, *selectionLabel, *toolHeading;
+  QTabWidget* inspector;
   QAction *undoAction, *redoAction;
   QVTKOpenGLNativeWidget* view;
   vtkNew<vtkGenericOpenGLRenderWindow> render;
   vtkNew<vtkRenderer> renderer;
+  vtkNew<vtkOrientationMarkerWidget> orientation;
   vtkNew<vtkPlane> plane;
   vtkNew<vtkDistanceRepresentation2D> distance;
   bool measuring = false;
   int rulerPoints = 0;
+  vtkWeakPointer<vtkActor> rulerActor;
+  int rulerHistoryIndex=-1;
+  bool rulerOnSingleScan=false, referenceReopened=false;
   vtkNew<vtkBoxWidget2> boxWidget;
   vtkNew<vtkBoxRepresentation> boxRepresentation;
   vtkNew<vtkActor> selectionActor;
@@ -114,6 +217,7 @@ class Window : public QMainWindow {
   BrushOverlay* brushOverlay=nullptr;
   QSpinBox* brushRadius=nullptr;
   QAction* brushAction=nullptr;
+  QAction *navigationAction, *boxAction, *measureAction, *clipAction;
   std::vector<float> strokeDepth;
   int depthWidth=0,depthHeight=0;
   struct Display {
@@ -167,7 +271,7 @@ class Window : public QMainWindow {
     progress->setAutoClose(false);
     if(!cancellable) progress->setCancelButton(nullptr);
     connect(progress, &QProgressDialog::canceled, this, [flag]{flag->store(true);});
-    menuBar()->setEnabled(false); scans->setEnabled(false); tools->setEnabled(false);refreshTitle();
+    menuBar()->setEnabled(false); workbench->setEnabled(false);refreshTitle();
     auto* watcher = new QFutureWatcher<QString>(this);
     connect(watcher, &QFutureWatcher<QString>::finished, this,
       [this,watcher,progress,flag,finish,label] {
@@ -175,7 +279,7 @@ class Window : public QMainWindow {
         const bool cancelled = flag->load();
         progress->reset(); progress->deleteLater(); watcher->deleteLater();
         busy = false; cancellation.reset();
-        menuBar()->setEnabled(true); scans->setEnabled(true); tools->setEnabled(true);
+        menuBar()->setEnabled(true); workbench->setEnabled(true);
         if(!cancelled && error.isEmpty()) guarded(finish);
         else if(!cancelled) reportFailure(label,error);
         statusBar()->showMessage(cancelled ? "Operation cancelled; current case preserved" :
@@ -240,7 +344,7 @@ class Window : public QMainWindow {
     item.mapper=vtkSmartPointer<vtkPolyDataMapper>::New();item.mapper->SetInputData(item.geometry.full);
     item.mapper->SetScalarVisibility(showColors);
     item.actor=vtkSmartPointer<vtkActor>::New();item.actor->SetMapper(item.mapper);
-    item.actor->GetProperty()->SetColor(0.86,0.79,0.62);
+    item.actor->GetProperty()->SetColor(0.78,0.82,0.86);
     cache.emplace(item.geometry.source.get(),std::move(item));
   }
   void syncOpacity() {
@@ -251,17 +355,37 @@ class Window : public QMainWindow {
   void syncScene() {
     if(pointTool!=PointTool::None&&document.history.index()!=toolHistoryIndex)clearPointTool();
     int selected=scans->currentRow();
-    {QSignalBlocker blocked(scans);scans->clear();
+    {
+      QSignalBlocker blocked(scans);
+      scans->clear();
+      margins->clear();
+      quint64 triangles=0, bytes=0;
       for(auto actor:active)renderer->RemoveActor(actor);active.clear();
-      for(auto& scan:document.project.scans){
+      for(const auto& scan:document.project.scans){
+        triangles+=scan.mesh->triangles.size();
+        bytes+=scan.original.size();
         auto found=cache.find(scan.mesh.get());if(found==cache.end())continue;
         auto& item=found->second;item.mapper->RemoveAllClippingPlanes();if(clip)item.mapper->AddClippingPlane(plane);
         item.actor->SetVisibility(scan.visible);item.actor->GetProperty()->SetOpacity(scan.opacity);
         renderer->AddActor(item.actor);active.push_back(item.actor);
-        auto* row=new QListWidgetItem(scan.name+" ["+scan.role+"]",scans);
+        const auto tooth=scan.toothFdi?QString("Tooth %1  ·  ").arg(scan.toothFdi):QString{};
+        auto* row=new QListWidgetItem(tooth+scan.role+"  ·  "+scan.name,scans);
+        row->setToolTip(row->text());
         row->setCheckState(scan.visible?Qt::Checked:Qt::Unchecked);
+        if(!scan.margin.empty()){
+          auto* margin=new QListWidgetItem(tooth+scan.role+" margin  ·  "+scan.name,margins);
+          margin->setToolTip(margin->text());
+          margin->setData(Qt::UserRole,scans->count()-1);
+        }
       }
       if(scans->count())scans->setCurrentRow(std::clamp(selected,0,scans->count()-1));
+      scanHeading->setText(QString("Scans (%1)").arg(scans->count()));
+      marginHeading->setText(QString("Saved margins (%1)").arg(margins->count()));
+      margins->setVisible(margins->count()>0);
+      QLocale locale;
+      cornersLabel->setText(locale.toString(3*triangles));
+      trianglesLabel->setText(locale.toString(triangles));
+      sizeLabel->setText(locale.formattedDataSize(bytes));
     }
     syncOpacity();refreshTitle();render->Render();
     updateSelection();
@@ -278,7 +402,10 @@ class Window : public QMainWindow {
   void setMeasuring(bool enabled) {
     measuring=enabled;
     rulerPoints=0;
+    rulerActor=nullptr;
+    rulerOnSingleScan=false;
     distance->VisibilityOff();
+    refreshToolUi();
     navigation(false);
     if(enabled)statusBar()->showMessage("Click two points on visible scans to measure their distance",6000);
   }
@@ -304,14 +431,141 @@ class Window : public QMainWindow {
       distance->SetPoint2WorldPosition(point);
       distance->VisibilityOn();
       rulerPoints=2;
+      rulerOnSingleScan=rulerActor.GetPointer()==picker->GetActor()&&rulerHistoryIndex==document.history.index();
     }else{
       distance->SetPoint1WorldPosition(point);
       distance->VisibilityOff();
       rulerPoints=1;
+      rulerActor=picker->GetActor();
+      rulerHistoryIndex=document.history.index();
       statusBar()->showMessage("Choose the second measurement point",4000);
     }
     render->Render();
     return true;
+  }
+  static double readingSpread(const zahn::ReferenceMeasurement& reference) {
+    const auto& values=reference.readings;
+    auto [minimum,maximum]=std::minmax_element(values.begin(),values.end(),[](const auto& a,const auto& b){
+      return a.measuredMm<b.measuredMm;
+    });
+    return maximum->measuredMm-minimum->measuredMm;
+  }
+  void setupReferenceMeasurement() {
+    if(document.project.scans.empty())throw std::runtime_error("Import a scan before setting up a reference measurement");
+    const auto existing=document.project.reference.value_or(zahn::ReferenceMeasurement{});
+    QDialog dialog(this);
+    dialog.setObjectName("reference-measurement");
+    dialog.setWindowTitle("Reference measurement");
+    auto* form=new QFormLayout(&dialog);
+    auto textField=[&](const QString& label,const QString& value,const QString& name,int length){
+      auto* field=new QLineEdit(value);
+      field->setObjectName(name);
+      field->setMaxLength(length);
+      form->addRow(label,field);
+      return field;
+    };
+    auto numberField=[&](const QString& label,double value,double minimum,const QString& name){
+      auto* field=new QDoubleSpinBox;
+      field->setObjectName(name);
+      field->setDecimals(6);
+      field->setRange(minimum,1e8);
+      field->setSuffix(" mm");
+      field->setSpecialValueText("Set value");
+      field->setValue(std::max(value,minimum));
+      form->addRow(label,field);
+      return field;
+    };
+    auto* landmarks=textField("&Landmarks",existing.landmarks,"landmarks",1024);
+    auto* method=textField("Reference &method",existing.method,"method",1024);
+    auto* expected=numberField("Reference &distance",existing.expectedMm,0,"expected");
+    auto* tolerance=numberField("&Tolerance",document.project.reference?existing.toleranceMm:-0.000001,-0.000001,"tolerance");
+    auto* notes=textField("Reviewer &notes",existing.notes,"notes",2048);
+    if(!existing.readings.empty()){
+      for(auto* field:{landmarks,method})field->setReadOnly(true);
+      for(auto* field:{expected,tolerance})field->setReadOnly(true);
+      QString result=QString("%1 recorded").arg(existing.readings.size());
+      if(existing.readings.size()>1)result+=QString(" · Spread %1 mm").arg(readingSpread(existing),0,'f',3);
+      form->addRow("Readings",new QLabel(result));
+    }
+    auto* buttons=new QDialogButtonBox(QDialogButtonBox::Save|QDialogButtonBox::Cancel);
+    form->addRow(buttons);
+    auto validate=[&]{buttons->button(QDialogButtonBox::Save)->setEnabled(
+      !landmarks->text().trimmed().isEmpty()&&!method->text().trimmed().isEmpty()&&expected->value()>0&&tolerance->value()>=0);};
+    connect(landmarks,&QLineEdit::textChanged,&dialog,validate);
+    connect(method,&QLineEdit::textChanged,&dialog,validate);
+    connect(expected,&QDoubleSpinBox::valueChanged,&dialog,validate);
+    connect(tolerance,&QDoubleSpinBox::valueChanged,&dialog,validate);
+    connect(buttons,&QDialogButtonBox::accepted,&dialog,&QDialog::accept);
+    connect(buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);
+    validate();
+    if(dialog.exec()!=QDialog::Accepted)return;
+    auto reference=existing;
+    if(existing.readings.empty()){
+      reference.landmarks=landmarks->text().trimmed();
+      reference.method=method->text().trimmed();
+      reference.expectedMm=expected->value();
+      reference.toleranceMm=tolerance->value();
+    }
+    reference.notes=notes->text().trimmed();
+    document.setReference(std::move(reference),"Set up reference measurement");
+    statusBar()->showMessage("Measure the landmarks, then choose Analyze → Record ruler reading.",8000);
+  }
+  void recordReferenceReading() {
+    if(!document.project.reference)throw std::runtime_error("Set up a reference measurement first");
+    const auto& scans=document.project.scans;
+    if(rulerPoints!=2||!rulerOnSingleScan||rulerHistoryIndex!=document.history.index())
+      throw std::runtime_error("Pick both landmarks on the same scan with the ruler before recording");
+    const auto scan=std::find_if(scans.begin(),scans.end(),[this](const auto& item){
+      const auto display=cache.find(item.mesh.get());
+      return display!=cache.end()&&display->second.actor.GetPointer()==rulerActor.GetPointer();
+    });
+    if(scan==scans.end()||scan->mesh!=scan->sourceMesh||scan->original.isEmpty())
+      throw std::runtime_error("Record reference measurements on the original imported scan");
+    auto reference=*document.project.reference;
+    if(reference.readings.size()>=zahn::ReferenceMeasurement::readingLimit)throw std::runtime_error("Reference reading limit reached");
+    const auto sourceHash=QString::fromLatin1(QCryptographicHash::hash(scan->original,QCryptographicHash::Sha256).toHex());
+    if(!reference.readings.empty()&&(sourceHash!=reference.readings.front().sourceSha256||scan->scale!=reference.readings.front().scaleToMm))
+      throw std::runtime_error("Use the same source scan and import scale as the first reading");
+    distance->BuildRepresentation();
+    const double measured=distance->GetDistance(), error=measured-reference.expectedMm;
+    if(!std::isfinite(measured)||measured<0)throw std::runtime_error("The ruler did not produce a finite distance");
+    reference.readings.push_back({scan->name.left(1024),scan->role.left(1024),sourceHash,
+      QApplication::applicationVersion(),QSysInfo::prettyProductName().left(256),
+      QDateTime::currentDateTimeUtc().toString(Qt::ISODate),scan->scale,measured,referenceReopened});
+    QString report=QString("Reading %1: %2 mm · Error %3 mm · %4")
+      .arg(reference.readings.size()).arg(measured,0,'f',3).arg(error,0,'f',3)
+      .arg(std::abs(error)<=reference.toleranceMm?"Within tolerance":"Outside tolerance");
+    if(reference.readings.size()>1)report+=QString(" · Spread %1 mm").arg(readingSpread(reference),0,'f',3);
+    document.setReference(std::move(reference),"Record reference reading");
+    rulerOnSingleScan=false;
+    statusBar()->showMessage(report,10000);
+  }
+  void exportReferenceCsv(const QString& file) {
+    const auto& reference=*document.project.reference;
+    auto quote=[](QString text){
+      const auto trimmed=text.trimmed();
+      if(!trimmed.isEmpty()&&QStringLiteral("=+-@").contains(trimmed.front()))text.prepend('\'');
+      text.replace('"',"\"\"");
+      return '"'+text+'"';
+    };
+    auto number=[](double value){return QString::number(value,'g',17);};
+    QByteArray csv="case_code,landmarks,reference_method,reviewer_notes,reference_mm,tolerance_mm,attempt,phase,";
+    csv+="scan,scan_role,scale_to_mm,measured_mm,error_mm,within_tolerance,repeat_spread_mm,source_sha256,app_version,platform,captured_utc\r\n";
+    const auto spread=reference.readings.size()>1?number(readingSpread(reference)):QString{};
+    for(size_t i=0;i<reference.readings.size();++i){
+      const auto& reading=reference.readings[i];
+      const double error=reading.measuredMm-reference.expectedMm;
+      const QStringList columns{quote(document.project.id),quote(reference.landmarks),quote(reference.method),
+        quote(reference.notes),number(reference.expectedMm),number(reference.toleranceMm),QString::number(i+1),
+        reading.afterReopen?"after_reopen":"initial_session",quote(reading.scanName),quote(reading.scanRole),
+        number(reading.scaleToMm),number(reading.measuredMm),number(error),
+        std::abs(error)<=reference.toleranceMm?"yes":"no",spread,quote(reading.sourceSha256),
+        quote(reading.appVersion),quote(reading.platform),quote(reading.capturedUtc)};
+      csv+=columns.join(',').toUtf8()+"\r\n";
+    }
+    QSaveFile output(file);
+    if(!output.open(QIODevice::WriteOnly)||output.write(csv)!=csv.size()||!output.commit())
+      throw std::runtime_error("Could not save the reference measurement CSV");
   }
   void saveScreenshot(const QString& file) {
     navigation(false);
@@ -345,16 +599,36 @@ class Window : public QMainWindow {
       for(size_t face=0;face<mesh->triangles.size();face+=stride){auto v=mesh->triangles[face].v;zahn::Vec3 a{v[1].x-v[0].x,v[1].y-v[0].y,v[1].z-v[0].z},b{v[2].x-v[0].x,v[2].y-v[0].y,v[2].z-v[0].z};zahn::Vec3 n{a.y*b.z-a.z*b.y,a.z*b.x-a.x*b.z,a.x*b.y-a.y*b.x};double length=std::hypot(n.x,n.y,n.z);if(length<1e-16)continue;zahn::Vec3 center{(v[0].x+v[1].x+v[2].x)/3,(v[0].y+v[1].y+v[2].y)/3,(v[0].z+v[1].z+v[2].z)/3};vtkIdType ids[2]{points->InsertNextPoint(center.x,center.y,center.z),points->InsertNextPoint(center.x+0.5*n.x/length,center.y+0.5*n.y/length,center.z+0.5*n.z/length)};lines->InsertNextCell(2,ids);}
       vtkNew<vtkPolyData> data;data->SetPoints(points);data->SetLines(lines);vtkNew<vtkPolyDataMapper> mapper;mapper->SetInputData(data);normalsActor->SetMapper(mapper);normalsActor->GetProperty()->SetColor(0.1,0.9,1);normalsActor->PickableOff();renderer->AddActor(normalsActor);
     }
-    if(pointTool==PointTool::None)
-      statusBar()->showMessage(QString("%1 vertices selected · Left brush / Shift+left erase · Right orbit / Shift+right pan · Wheel zoom").arg(selectedVertices.size()),4000);
     render->Render();
+  }
+  void refreshToolUi() {
+    const bool hasBox=boxWidget->GetEnabled();
+    const bool navigating=!picking&&!hasBox&&!measuring&&pointTool==PointTool::None;
+    navigationAction->setChecked(navigating);
+    boxAction->setChecked(hasBox);
+    measureAction->setChecked(measuring);
+    clipAction->setChecked(clip);
+    QString name="Navigate";
+    if(pointTool==PointTool::Margin)name="Margin trace";
+    else if(pointTool!=PointTool::None)name="Landmark registration";
+    else if(picking)name="Vertex brush";
+    else if(hasBox)name="Crop / selection box";
+    else if(measuring)name="Distance measurement";
+    if(toolHeading->text()!=name){
+      toolHeading->setText(name);
+      activeToolLabel->setText("Active tool · "+name);
+    }
+    const auto count=selectedVertices.size();
+    selectionLabel->setText(QString("Selected · %1 %2")
+      .arg(QLocale().toString(quint64(count)),count==1?"vertex":"vertices"));
   }
   void setBrushActive(bool enabled){
     picking=enabled;inputStyle->setBrush(enabled);strokeDepth.clear();
     if(brushRadius)inputStyle->radius=brushRadius->value()*view->devicePixelRatioF();
-    if(brushAction){QSignalBlocker block(brushAction);brushAction->setChecked(enabled);}
+    if(brushAction)brushAction->setChecked(enabled);
     if(brushOverlay){brushOverlay->active=enabled;brushOverlay->update();}
     if(enabled){boxWidget->Off();setMeasuring(false);}
+    refreshToolUi();
   }
   void toggleBrush(){
     cancelPointTool();
@@ -393,6 +667,7 @@ class Window : public QMainWindow {
     return pointTool==PointTool::FixedLandmarks?fixedRow:movingRow;
   }
   void updateTrace() {
+    refreshToolUi();
     traceActor->VisibilityOff();
     const int row=pointTool==PointTool::None?scans->currentRow():captureRow();
     if(row<0||size_t(row)>=document.project.scans.size())return;
@@ -481,25 +756,79 @@ class Window : public QMainWindow {
     document.replaceScan(size_t(row),std::move(scan),clear?"Clear margin":"Apply margin");
     syncScene();
   }
-  void startRegistration() {
+  void selectTooth() {
     const int row=scans->currentRow();
-    if(row<0||document.project.scans.size()<2)throw std::runtime_error("Select a moving scan and import a fixed scan first");
-    cancelPointTool();
+    if(row<0)throw std::runtime_error("Select a scan in the scene first");
+    if(pointTool!=PointTool::None)throw std::runtime_error("Finish or cancel the active point tool first");
+    auto scan=document.project.scans.at(size_t(row));
+    if(scan.format=="zmesh")throw std::runtime_error("Select the preparation scan to assign the tooth");
+
+    QDialog dialog(this);
+    dialog.setObjectName("tooth-chart");
+    dialog.setWindowTitle("Select tooth markup");
+    auto* layout=new QVBoxLayout(&dialog);
+    layout->addWidget(new QLabel("Permanent teeth (FDI) · patient right to left"));
+    auto* chart=new QGridLayout;
+    layout->addLayout(chart);
+    chart->addWidget(new QLabel("Upper"),0,0);
+    chart->addWidget(new QLabel("Lower"),1,0);
+    int selected=scan.toothFdi;
+    for(int arch=0;arch<2;++arch){
+      for(int position=0;position<16;++position){
+        const int tooth=position<8?(arch==0?18:48)-position:(arch==0?21:31)+position-8;
+        auto* button=new QPushButton(QString::number(tooth));
+        button->setProperty("tooth",true);
+        button->setObjectName(QString("tooth-%1").arg(tooth));
+        button->setAccessibleName(QString("Select tooth %1").arg(tooth));
+        button->setMinimumWidth(38);
+        button->setCheckable(true);
+        button->setChecked(tooth==selected);
+        button->setEnabled(arch==0?scan.role!="Lower jaw":scan.role!="Upper jaw");
+        if(tooth==selected&&button->isEnabled())button->setFocus();
+        chart->addWidget(button,arch,position+1+int(position>=8));
+        connect(button,&QPushButton::clicked,&dialog,[&dialog,&selected,tooth]{selected=tooth;dialog.accept();});
+      }
+    }
+    chart->setColumnMinimumWidth(9,14);
+    auto* buttons=new QDialogButtonBox(QDialogButtonBox::Cancel);
+    auto* clear=buttons->addButton("Clear tooth",QDialogButtonBox::ResetRole);
+    clear->setEnabled(selected!=0);
+    connect(clear,&QPushButton::clicked,&dialog,[&dialog,&selected]{selected=0;dialog.accept();});
+    connect(buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);
+    layout->addWidget(buttons);
+    if(dialog.exec()!=QDialog::Accepted||selected==scan.toothFdi)return;
+    scan.toothFdi=selected;
+    document.replaceScan(size_t(row),std::move(scan),selected?"Set tooth markup":"Clear tooth markup");
+    syncScene();
+  }
+  QString scanLabel(int row) const {
+    const auto& scan=document.project.scans.at(size_t(row));
+    const auto name=scan.toothFdi?QString("Tooth %1 · %2").arg(scan.toothFdi).arg(scan.name):scan.name;
+    return QString("%1. %2 [%3]").arg(row+1).arg(name,scan.role);
+  }
+  std::optional<int> chooseOtherScan(int row,const QString& title,const QString& prompt) {
     QStringList choices;
     std::vector<int> rows;
     for(int i=0;i<int(document.project.scans.size());++i){
       if(i==row)continue;
-      const auto& scan=document.project.scans[i];
-      choices<<QString("%1. %2 [%3]").arg(i+1).arg(scan.name,scan.role);
+      choices<<scanLabel(i);
       rows.push_back(i);
     }
     bool ok=false;
-    const auto item=QInputDialog::getItem(this,"Landmark registration","Fixed scan",choices,0,false,&ok);
-    if(!ok)return;
+    const auto item=QInputDialog::getItem(this,title,prompt,choices,0,false,&ok);
+    if(!ok)return std::nullopt;
+    return rows.at(size_t(choices.indexOf(item)));
+  }
+  void startRegistration() {
+    const int row=scans->currentRow();
+    if(row<0||document.project.scans.size()<2)throw std::runtime_error("Select a moving scan and import a fixed scan first");
+    cancelPointTool();
+    const auto fixed=chooseOtherScan(row,"Landmark registration","Fixed scan");
+    if(!fixed)return;
     setBrushActive(false);
     setMeasuring(false);
     boxWidget->Off();
-    beginRegistration(row,rows.at(size_t(choices.indexOf(item))));
+    beginRegistration(row,*fixed);
   }
   void beginRegistration(int moving,int fixed) {
     movingRow=moving;
@@ -554,7 +883,7 @@ class Window : public QMainWindow {
     render->Render();
   }
   bool approveGeometry(const zahn::Scan& before,const zahn::DisplayMesh& candidate,
-                       const QString& label,const QString& report) {
+                       const QString& label,const QString& report,bool keepSource=false) {
     auto& old=cache.at(before.mesh.get());
     vtkNew<vtkPolyDataMapper> mapper;
     mapper->SetInputData(candidate.full);
@@ -565,14 +894,15 @@ class Window : public QMainWindow {
     preview->GetProperty()->SetColor(0.5,0.9,0.65);
     const auto traceVisible=traceActor->GetVisibility();
     const auto undercutVisible=undercutActor->GetVisibility();
-    old.actor->VisibilityOff();
+    if(!keepSource)old.actor->VisibilityOff();
     selectionActor->VisibilityOff();
     normalsActor->VisibilityOff();
-    traceActor->VisibilityOff();
+    if(!keepSource)traceActor->VisibilityOff();
     undercutActor->VisibilityOff();
     renderer->AddActor(preview);
+    if(keepSource)renderer->ResetCameraClippingRange();
     render->Render();
-    const auto answer=(smokeMode==SmokeMode::Preparation||smokeMode==SmokeMode::Analysis)?QMessageBox::Apply:
+    const auto answer=(smokeMode==SmokeMode::Preparation||smokeMode==SmokeMode::Analysis||smokeMode==SmokeMode::Crown)?QMessageBox::Apply:
       QMessageBox::question(this,label,report,QMessageBox::Apply|QMessageBox::Cancel,QMessageBox::Cancel);
     renderer->RemoveActor(preview);
     old.actor->SetVisibility(before.visible);
@@ -580,6 +910,7 @@ class Window : public QMainWindow {
     normalsActor->VisibilityOn();
     traceActor->SetVisibility(traceVisible);
     undercutActor->SetVisibility(undercutVisible);
+    if(keepSource)renderer->ResetCameraClippingRange();
     render->Render();
     return answer==QMessageBox::Apply;
   }
@@ -626,10 +957,86 @@ class Window : public QMainWindow {
     const auto* axis=renderer->GetActiveCamera()->GetDirectionOfProjection();
     return {-axis[0],-axis[1],-axis[2]};
   }
+  void createResearchCrown(std::optional<double> smokeHeight={},std::function<void()> after={}) {
+    const int row=scans->currentRow();
+    if(row<0)throw std::runtime_error("Select the preparation scan first");
+    if(pointTool!=PointTool::None)throw std::runtime_error("Apply or cancel the active point tool first");
+    const auto before=document.project.scans.at(size_t(row));
+    if(!before.visible||before.opacity<=0||before.role=="Restoration candidate")
+      throw std::runtime_error("Select a visible preparation scan");
+    if(!before.toothFdi||before.margin.size()<3)
+      throw std::runtime_error("Select a tooth and apply its margin before building a research crown");
+    if(document.project.scans.size()>=63)throw std::runtime_error("Remove a scan before adding the crown (63-scan limit)");
+    const auto axis=insertionAxis();
+    bool ok=true;
+    const auto height=smokeHeight?*smokeHeight:QInputDialog::getDouble(this,"Build research crown",
+      "Height above the highest margin point (mm)\nThe current view sets the insertion direction.",5,2,12,2,&ok);
+    if(!ok)return;
+    auto display=std::make_shared<zahn::DisplayMesh>();
+    runJob("Building research crown",[margin=before.margin,axis,height,display](const zahn::Checkpoint& check){
+      auto mesh=std::make_shared<const zahn::Mesh>(zahn::researchCrown(margin,axis,height,check));
+      *display=zahn::prepareDisplay(std::move(mesh),check);
+    },[this,before,axis,height,display,after]{
+      const auto report=QString("Add the hollow research crown for tooth %1 as a restoration candidate?")
+        .arg(before.toothFdi);
+      if(!approveGeometry(before,*display,"Research crown",report,true))return;
+      zahn::Scan crown;
+      crown.name="Research crown";
+      crown.role="Restoration candidate";
+      crown.format="zmesh";
+      crown.toothFdi=before.toothFdi;
+      crown.sourceMesh=crown.mesh=display->source;
+      crown.operations.append(QJsonObject{{"operation","Build research crown"},{"preparationScan",before.name},
+        {"axis",QJsonArray{axis.x,axis.y,axis.z}},{"heightMm",height},
+        {"timeUtc",QDateTime::currentDateTimeUtc().toString(Qt::ISODate)}});
+      addDisplay(std::move(*display));
+      document.addScan(std::move(crown),"Add research crown");
+      syncScene();
+      scans->setCurrentRow(scans->count()-1);
+      renderer->ResetCameraClippingRange();
+      render->Render();
+      if(after)after();
+    });
+  }
   void clearInsertion() {
     analyzedMesh.reset();
     undercutActor->VisibilityOff();
     undercutActor->SetMapper(nullptr);
+  }
+  void measureSeparation() {
+    const int row=scans->currentRow();
+    if(row<0||document.project.scans.size()<2)
+      throw std::runtime_error("Select a scan and import a second surface before measuring separation");
+    if(const auto other=chooseOtherScan(row,"Sampled surface separation","Comparison surface"))
+      measureSeparationBetween(row,*other);
+  }
+  void measureSeparationBetween(int firstRow,int secondRow,
+    std::function<void(const zahn::SampledSeparation&)> after={}) {
+    const auto& first=document.project.scans.at(size_t(firstRow));
+    const auto& second=document.project.scans.at(size_t(secondRow));
+    auto result=std::make_shared<zahn::SampledSeparation>();
+    const auto firstLabel=scanLabel(firstRow);
+    const auto secondLabel=scanLabel(secondRow);
+    runJob("Measuring surface separation",
+      [a=first.mesh,b=second.mesh,result](const zahn::Checkpoint& check){
+        *result=zahn::sampledSeparation(*a,*b,check);
+      },[this,result,firstLabel,secondLabel,after]{
+        if(after){after(*result);return;}
+        auto coordinates=[](zahn::Vec3 point){
+          return QString("(%1, %2, %3) mm")
+            .arg(point.x,0,'g',9).arg(point.y,0,'g',9).arg(point.z,0,'g',9);
+        };
+        QMessageBox dialog(QMessageBox::Information,"Sampled surface separation",
+          QString("Smallest sampled separation: %1 mm\n%2 sample queries across both surfaces\n\n"
+                  "%3\n%4\n\n%5\n%6\n\n"
+                  "Distances are unsigned. Sampling can miss closer areas and intersections.")
+            .arg(result->minimum,0,'g',6).arg(result->samples)
+            .arg(firstLabel,coordinates(result->onFirst),secondLabel,coordinates(result->onSecond)),
+          QMessageBox::Ok,this);
+        dialog.setTextFormat(Qt::PlainText);
+        dialog.setTextInteractionFlags(Qt::TextSelectableByMouse|Qt::TextSelectableByKeyboard);
+        dialog.exec();
+      });
   }
   void analyzeCurrentInsertion() {
     const int row=scans->currentRow();
@@ -741,6 +1148,7 @@ class Window : public QMainWindow {
       clearInsertion();
       for(auto actor:active)renderer->RemoveActor(actor);active.clear();cache.clear();
       for(auto& display:result->display)addDisplay(std::move(display));
+      referenceReopened=!recovery&&result->project.reference.has_value();
       document.reset(std::move(result->project),recovery);path=recovery?QString():file;
       if(!recovery){
         clearRecovery();
@@ -754,6 +1162,258 @@ class Window : public QMainWindow {
   void commitOpacity(int value) {
     int i=scans->currentRow();if(i<0||busy)return;
     auto& scan=document.project.scans[i];document.setDisplay(size_t(i),scan.visible,value/100.);
+  }
+  void buildWorkbench(const std::map<QString,QAction*>& actions,
+                      const std::array<QMenu*,5>& stages, QDoubleSpinBox* elevation) {
+    auto heading=[](const QString& title) {
+      auto* label=new QLabel(title);
+      label->setProperty("heading",true);
+      return label;
+    };
+    auto panel=[] {
+      auto* frame=new QFrame;
+      frame->setProperty("panel",true);
+      return frame;
+    };
+    auto button=[this](QAction* action,const QString& caption) {
+      auto* control=new QToolButton;
+      control->setText(caption);
+      control->setSizePolicy(QSizePolicy::Preferred,QSizePolicy::Fixed);
+      control->setAccessibleName(action->text());
+      const auto shortcut=action->shortcut().toString(QKeySequence::NativeText);
+      control->setToolTip(shortcut.isEmpty()?action->text():action->text()+" ("+shortcut+")");
+      auto sync=[control,action]{
+        control->setEnabled(action->isEnabled());
+        control->setCheckable(action->isCheckable());
+        control->setChecked(action->isChecked());
+      };
+      sync();
+      connect(action,&QAction::changed,control,sync);
+      connect(control,&QToolButton::clicked,action,&QAction::trigger);
+      return control;
+    };
+
+    workbench=new QWidget;
+    auto* shell=new QVBoxLayout(workbench);
+    shell->setContentsMargins(12,10,12,10);
+    shell->setSpacing(12);
+    auto* stageRow=new QHBoxLayout;
+    stageRow->setSpacing(6);
+    shell->addLayout(stageRow);
+
+    auto* body=new QHBoxLayout;
+    body->setSpacing(10);
+    shell->addLayout(body,1);
+    auto* left=new QVBoxLayout;
+    left->setSpacing(10);
+    body->addLayout(left);
+
+    auto* scene=panel();
+    scene->setMinimumWidth(210);
+    scene->setMaximumWidth(270);
+    auto* sceneLayout=new QVBoxLayout(scene);
+    sceneLayout->addWidget(heading("Scene"));
+    scanHeading=new QLabel("Scans (0)");
+    sceneLayout->addWidget(scanHeading);
+    scans->setAccessibleName("Scans");
+    scans->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    sceneLayout->addWidget(scans,1);
+    marginHeading=new QLabel("Saved margins (0)");
+    sceneLayout->addWidget(marginHeading);
+    margins=new QListWidget;
+    margins->setAccessibleName("Saved margins");
+    margins->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    margins->setMaximumHeight(118);
+    margins->hide();
+    sceneLayout->addWidget(margins);
+    auto selectMargin=[this](QListWidgetItem* item){scans->setCurrentRow(item->data(Qt::UserRole).toInt());};
+    connect(margins,&QListWidget::itemClicked,this,selectMargin);
+    connect(margins,&QListWidget::itemActivated,this,selectMargin);
+    left->addWidget(scene,1);
+
+    auto* info=panel();
+    auto* infoLayout=new QVBoxLayout(info);
+    infoLayout->addWidget(heading("Case info"));
+    auto* stats=new QFormLayout;
+    cornersLabel=new QLabel("0");
+    trianglesLabel=new QLabel("0");
+    sizeLabel=new QLabel("0 B");
+    stats->addRow("Triangle corners",cornersLabel);
+    stats->addRow("Triangles",trianglesLabel);
+    stats->addRow("Source files",sizeLabel);
+    sizeLabel->setToolTip("Combined size of the original imported scan files");
+    infoLayout->addLayout(stats);
+    left->addWidget(info);
+
+    auto* viewport=panel();
+    viewport->setObjectName("viewportFrame");
+    auto* viewportLayout=new QGridLayout(viewport);
+    viewportLayout->setContentsMargins(2,2,2,2);
+    view->setMinimumSize(360,300);
+    viewportLayout->addWidget(view,0,0);
+    body->addWidget(viewport,1);
+
+    auto* projection=new QComboBox;
+    projection->setAccessibleName("Camera projection");
+    projection->addItems({"Perspective","Orthographic"});
+    connect(projection,&QComboBox::activated,this,[this,action=actions.at("Orthographic / perspective")](int index){
+      if((index==1)!=bool(renderer->GetActiveCamera()->GetParallelProjection()))action->trigger();
+    });
+    connect(actions.at("Orthographic / perspective"),&QAction::triggered,this,[this,projection]{
+      projection->setCurrentIndex(renderer->GetActiveCamera()->GetParallelProjection()?1:0);
+    });
+    auto* viewportTools=panel();
+    auto* topTools=new QHBoxLayout(viewportTools);
+    topTools->setContentsMargins(7,6,7,6);
+    topTools->setSpacing(4);
+    topTools->addWidget(projection);
+    topTools->addWidget(button(navigationAction,"Navigate"));
+    topTools->addWidget(button(brushAction,"Brush"));
+    topTools->addWidget(button(boxAction,"Box"));
+    topTools->addWidget(button(measureAction,"Measure"));
+    topTools->addWidget(button(clipAction,"Clip"));
+    auto* overlays=new QGridLayout;
+    overlays->setContentsMargins(10,10,10,10);
+    overlays->addWidget(viewportTools,0,0,Qt::AlignTop|Qt::AlignLeft);
+    auto* cameraTools=new QWidget;
+    auto* cameraLayout=new QVBoxLayout(cameraTools);
+    cameraLayout->setContentsMargins(0,0,0,0);
+    cameraLayout->setSpacing(4);
+    cameraLayout->addWidget(button(actions.at("Fit"),"Fit"));
+    cameraLayout->addWidget(button(actions.at("Zoom in"),"+"));
+    cameraLayout->addWidget(button(actions.at("Zoom out"),"−"));
+    overlays->addWidget(cameraTools,1,0,Qt::AlignBottom|Qt::AlignRight);
+    overlays->setRowStretch(1,1);
+    viewportLayout->addLayout(overlays,0,0);
+
+    inspector=new QTabWidget;
+    inspector->setMinimumWidth(265);
+    inspector->setMaximumWidth(310);
+    body->addWidget(inspector);
+    auto* properties=new QWidget;
+    auto* propertiesLayout=new QVBoxLayout(properties);
+    propertiesLayout->setContentsMargins(12,14,12,12);
+    propertiesLayout->setSpacing(10);
+    toolHeading=heading({});
+    propertiesLayout->addWidget(toolHeading);
+    auto* form=new QFormLayout;
+    form->setRowWrapPolicy(QFormLayout::WrapAllRows);
+    form->setVerticalSpacing(7);
+    auto* radiusControls=new QHBoxLayout;
+    auto* radiusSlider=new QSlider(Qt::Horizontal);
+    radiusSlider->setAccessibleName("Brush radius");
+    radiusSlider->setRange(brushRadius->minimum(),brushRadius->maximum());
+    radiusSlider->setValue(brushRadius->value());
+    brushRadius->setSuffix(" px");
+    brushRadius->setAccessibleName("Brush radius in pixels");
+    connect(radiusSlider,&QSlider::valueChanged,brushRadius,&QSpinBox::setValue);
+    connect(brushRadius,&QSpinBox::valueChanged,radiusSlider,&QSlider::setValue);
+    radiusControls->addWidget(radiusSlider,1);
+    radiusControls->addWidget(brushRadius);
+    form->addRow("Brush radius",radiusControls);
+    opacity->setAccessibleName("Scan opacity");
+    form->addRow("Scan opacity",opacity);
+    elevation->setSuffix(" mm");
+    elevation->setAccessibleName("Clipping Z position");
+    form->addRow("Clipping Z",elevation);
+    propertiesLayout->addLayout(form);
+    propertiesLayout->addWidget(heading("Vertex selection"));
+    propertiesLayout->addWidget(button(actions.at("Keep selected vertices…"),"Keep selection…"));
+    propertiesLayout->addWidget(button(actions.at("Delete selected vertices and incident faces…"),"Delete selection…"));
+    propertiesLayout->addWidget(button(actions.at("Clear vertex selection"),"Clear selection"));
+    propertiesLayout->addStretch();
+    const int propertiesTab=inspector->addTab(properties,"Tool Properties");
+
+    auto* workflowPages=new QStackedWidget;
+    const int workflowTab=inspector->addTab(workflowPages,"Workflow");
+    auto* group=new QButtonGroup(workbench);
+    const std::array<QString,5> descriptions{
+      "Import and register","Clean and repair","Select teeth and design","Inspect surfaces","Research STL"
+    };
+    const std::map<QString,QString> compactLabels{
+      {"Delete selected vertices and incident faces…","Delete selection…"},
+      {"Keep largest connected component…","Keep largest component…"},
+      {"Keep component touched by selection…","Keep selected component…"},
+      {"Remove duplicate/degenerate faces…","Remove duplicate / bad faces…"},
+      {"Orient connected faces consistently…","Orient faces consistently…"},
+      {"Smooth with fixed boundary…","Smooth scan…"},
+      {"Simplify with topology preservation…","Simplify scan…"}
+    };
+    for(size_t i=0;i<stages.size();++i){
+      auto* stage=new QPushButton;
+      stage->setProperty("stage",true);
+      stage->setCheckable(true);
+      stage->setAccessibleName(stages[i]->title());
+      stage->setMinimumHeight(59);
+      stage->setSizePolicy(QSizePolicy::Expanding,QSizePolicy::Fixed);
+      auto* tileLayout=new QHBoxLayout(stage);
+      tileLayout->setContentsMargins(10,6,10,6);
+      tileLayout->setSpacing(8);
+      auto* number=new QLabel(QString::number(i+1));
+      number->setProperty("stageNumber",true);
+      number->setAlignment(Qt::AlignCenter);
+      number->setFixedSize(29,29);
+      number->setAttribute(Qt::WA_TransparentForMouseEvents);
+      tileLayout->addWidget(number);
+      auto* stageText=new QVBoxLayout;
+      stageText->setSpacing(2);
+      tileLayout->addLayout(stageText,1);
+      auto* title=heading(stages[i]->title());
+      title->setAttribute(Qt::WA_TransparentForMouseEvents);
+      stageText->addWidget(title);
+      auto* description=new QLabel(descriptions[i]);
+      description->setProperty("muted",true);
+      description->setAttribute(Qt::WA_TransparentForMouseEvents);
+      description->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);
+      stageText->addWidget(description);
+      stage->setToolTip(descriptions[i]);
+      group->addButton(stage,int(i));
+      stageRow->addWidget(stage,1);
+
+      auto* page=new QWidget;
+      auto* pageLayout=new QVBoxLayout(page);
+      pageLayout->setContentsMargins(12,14,12,12);
+      pageLayout->setSpacing(5);
+      pageLayout->addWidget(heading(stages[i]->title()));
+      for(auto* action:stages[i]->actions()){
+        if(action->isSeparator())continue;
+        const auto compact=compactLabels.find(action->text());
+        auto* control=button(action,compact==compactLabels.end()?action->text():compact->second);
+        control->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Fixed);
+        pageLayout->addWidget(control);
+      }
+      pageLayout->addStretch();
+      auto* scroll=new QScrollArea;
+      scroll->setWidgetResizable(true);
+      scroll->setFrameShape(QFrame::NoFrame);
+      scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+      scroll->setWidget(page);
+      workflowPages->addWidget(scroll);
+    }
+    group->button(1)->setChecked(true);
+    workflowPages->setCurrentIndex(1);
+    connect(group,&QButtonGroup::idClicked,this,[this,workflowPages,workflowTab](int index){
+      workflowPages->setCurrentIndex(index);
+      inspector->setCurrentIndex(workflowTab);
+    });
+    connect(brushAction,&QAction::triggered,this,[this,propertiesTab]{inspector->setCurrentIndex(propertiesTab);});
+    stageRow->addSpacing(5);
+    stageRow->addWidget(button(undoAction,"Undo"));
+    stageRow->addWidget(button(redoAction,"Redo"));
+    auto* saveButton=button(actions.at("Save"),"Save");
+    saveButton->setProperty("primary",true);
+    stageRow->addWidget(saveButton);
+
+    connect(statusBar(),&QStatusBar::messageChanged,this,[this](const QString& message){
+      if(message.isEmpty())statusBar()->showMessage("Ready");
+    });
+    activeToolLabel=new QLabel;
+    selectionLabel=new QLabel;
+    activeToolLabel->setMinimumWidth(activeToolLabel->fontMetrics().horizontalAdvance("Active tool · Landmark registration")+20);
+    statusBar()->addPermanentWidget(activeToolLabel);
+    statusBar()->addPermanentWidget(selectionLabel);
+    refreshToolUi();
+    setCentralWidget(workbench);
   }
 protected:
   bool eventFilter(QObject* watched,QEvent* event) override {
@@ -770,11 +1430,14 @@ public:
     // QUndoStack::clear emits indexChanged during destruction. The renderer's
     // members are destroyed before the document, so detach this callback first.
     disconnect(&document.history,nullptr,this,nullptr);
+    orientation->SetEnabled(0);
+    orientation->SetInteractor(nullptr);
     inputStyle->setBrush(false);inputStyle->paint={};inputStyle->hover={};inputStyle->changed={};inputStyle->strokeEnded={};inputStyle->measure={};
     db.close();
   }
   Window(const QString& dataDirectory, SmokeMode mode) : directory(dataDirectory), smokeMode(mode) {
-    resize(1280,850);
+    resize(1320,780);
+    menuBar()->setNativeMenuBar(false);
     db=QSqlDatabase::addDatabase("QSQLITE");db.setDatabaseName(directory+"/cases.sqlite");
     if(db.open()){QSqlQuery q(db);q.exec("CREATE TABLE IF NOT EXISTS cases(path TEXT PRIMARY KEY,name TEXT)");}
     view=new QVTKOpenGLNativeWidget(this);view->setRenderWindow(render);render->AddRenderer(renderer);
@@ -783,7 +1446,16 @@ public:
     inputStyle->measure=[this](int x,int y){return measureAt(x,y);};
     inputStyle->paint=[this](int x,int y,bool erase){brushStamp(x,y,erase);};inputStyle->changed=[this]{updateSelection();};inputStyle->strokeEnded=[this]{strokeDepth.clear();};
     inputStyle->hover=[this](int x,int y,bool erase){double ratio=view->devicePixelRatioF();brushOverlay->center={x/ratio,(render->GetSize()[1]-1-y)/ratio};brushOverlay->inside=true;brushOverlay->erase=erase;brushOverlay->update();};
-    renderer->SetBackground(0.08,0.11,0.15);setCentralWidget(view);
+    renderer->SetBackground(0.12,0.16,0.20);
+    renderer->SetBackground2(0.065,0.085,0.11);
+    renderer->GradientBackgroundOn();
+    vtkNew<vtkAxesActor> axes;
+    orientation->SetOrientationMarker(axes);
+    orientation->SetInteractor(render->GetInteractor());
+    orientation->SetDefaultRenderer(renderer);
+    orientation->SetViewport(0.015,0.018,0.14,0.18);
+    orientation->SetEnabled(1);
+    orientation->InteractiveOff();
     traceActor->PickableOff();
     traceActor->GetProperty()->SetColor(1,0.75,0.2);
     traceActor->GetProperty()->SetPointSize(8);
@@ -809,12 +1481,12 @@ public:
     });
     render->GetInteractor()->AddObserver(vtkCommand::StartInteractionEvent,interaction);
     render->GetInteractor()->AddObserver(vtkCommand::EndInteractionEvent,interaction);
-    scans=new QListWidget;auto* dock=new QDockWidget("Scans",this);dock->setWidget(scans);addDockWidget(Qt::LeftDockWidgetArea,dock);
-    tools=addToolBar("Display");tools->addWidget(new QLabel("Opacity "));opacity=new QSlider(Qt::Horizontal);
-    opacity->setRange(0,100);opacity->setValue(100);opacity->setMaximumWidth(140);tools->addWidget(opacity);
-    tools->addSeparator();tools->addWidget(new QLabel("Brush radius (px) "));brushRadius=new QSpinBox;brushRadius->setRange(5,200);brushRadius->setValue(30);tools->addWidget(brushRadius);
+    scans=new QListWidget;
+    opacity=new QSlider(Qt::Horizontal);
+    opacity->setRange(0,100);opacity->setValue(100);
+    brushRadius=new QSpinBox;brushRadius->setRange(5,200);brushRadius->setValue(30);
     connect(brushRadius,&QSpinBox::valueChanged,this,[this](int radius){brushOverlay->radius=radius;inputStyle->radius=radius*view->devicePixelRatioF();brushOverlay->update();});
-    tools->addSeparator();tools->addWidget(new QLabel("Clip Z (mm) "));auto* z=new QDoubleSpinBox;z->setRange(-10000,10000);tools->addWidget(z);
+    auto* z=new QDoubleSpinBox;z->setRange(-10000,10000);
     connect(z,&QDoubleSpinBox::valueChanged,this,[this](double v){plane->SetOrigin(0,0,v);render->Render();});
     connect(opacity,&QSlider::valueChanged,this,[this](int value){
       int i=scans->currentRow();if(i<0||busy)return;
@@ -832,16 +1504,29 @@ public:
     connect(scans,&QListWidget::itemChanged,this,[this](QListWidgetItem* row){
       int i=scans->row(row);if(i>=0&&!busy){auto& s=document.project.scans[i];document.setDisplay(size_t(i),row->checkState()==Qt::Checked,s.opacity);}
     });
-    auto action=[this](QMenu* menu,QString title,auto fn){auto* a=menu->addAction(title);
-      connect(a,&QAction::triggered,this,[this,fn]{if(!busy){strokeDepth.clear();guarded(fn);}});return a;};
+    std::map<QString,QAction*> actions;
+    auto action=[this,&actions](QMenu* menu,QString title,auto fn){
+      auto* a=menu->addAction(title);
+      actions.emplace(title,a);
+      connect(a,&QAction::triggered,this,[this,fn]{
+        if(!busy){strokeDepth.clear();guarded(fn);refreshToolUi();}
+      });
+      return a;
+    };
+    auto* menu=menuBar()->addMenu("File");
     auto* edit=menuBar()->addMenu("Edit");
+    auto* camera=menuBar()->addMenu("View");
+    auto* scan=menuBar()->addMenu("Scan");
+    auto* preparation=menuBar()->addMenu("Prepare");
+    auto* margin=menuBar()->addMenu("Design");
+    auto* analysis=menuBar()->addMenu("Analyze");
+    auto* exportMenu=menuBar()->addMenu("Export");
     undoAction=action(edit,"Undo",[this]{document.history.undo();});undoAction->setShortcut(QKeySequence::Undo);
     redoAction=action(edit,"Redo",[this]{document.history.redo();});redoAction->setShortcut(QKeySequence::Redo);
     action(edit,"Remove selected scan",[this]{int i=scans->currentRow();if(i>=0)document.removeScan(size_t(i));});
     connect(&document.history,&QUndoStack::indexChanged,this,[this]{syncScene();},Qt::QueuedConnection);
-    auto* menu=menuBar()->addMenu("Case");
     action(menu,"New case",[this]{if(!leave())return;bool ok;auto id=QInputDialog::getText(this,"Case identifier","Use a non-identifying case code",QLineEdit::Normal,{},&ok);if(!ok)return;
-      zahn::Project project;project.id=id;clearPointTool();clearInsertion();document.reset(std::move(project),true);path.clear();clearRecovery();cache.clear();setMeasuring(false);syncScene();});
+      zahn::Project project;project.id=id;clearPointTool();clearInsertion();referenceReopened=false;document.reset(std::move(project),true);path.clear();clearRecovery();cache.clear();setMeasuring(false);syncScene();});
     action(menu,"Open project…",[this]{loadCase(QFileDialog::getOpenFileName(this,"Open project",{},"ZahnCAD (*.zahncad)"));});
     action(menu,"Recent cases…",[this]{QStringList names,paths;QSqlQuery q("SELECT name,path FROM cases ORDER BY rowid DESC LIMIT 30",db);
       if(!q.isActive())throw std::runtime_error(q.lastError().text().toStdString());
@@ -851,24 +1536,25 @@ public:
     action(menu,"Save",[this]{save();})->setShortcut(QKeySequence::Save);
     action(menu,"Save as…",[this]{save(true);});
     action(menu,"Recover autosaved case…",[this]{loadCase({},true);});
-    action(menu,"Import scan…",[this]{auto file=QFileDialog::getOpenFileName(this,"Import scan",{},"Scans (*.stl *.ply *.obj)");if(file.isEmpty())return;
+    action(scan,"Import scan…",[this]{auto file=QFileDialog::getOpenFileName(this,"Import scan",{},"Scans (*.stl *.ply *.obj)");if(file.isEmpty())return;
       bool ok;double factor=QInputDialog::getDouble(this,"Confirm units","Multiply source coordinates by this factor to obtain mm",1,0.000001,1000000,6,&ok);if(!ok)return;
-      auto role=QInputDialog::getItem(this,"Assign scan","Role",{"Upper jaw","Lower jaw","Antagonist","Bite","Reference"},0,false,&ok);if(ok)loadScan(file,role,factor);});
-    action(menu,"Inspect selected scan",[this]{int i=scans->currentRow();if(i<0)return;auto mesh=document.project.scans[i].mesh;auto result=std::make_shared<QString>();
+      auto role=QInputDialog::getItem(this,"Assign scan","Role",{"Upper jaw","Lower jaw","Antagonist","Bite","Reference","Restoration candidate"},0,false,&ok);if(ok)loadScan(file,role,factor);});
+    action(analysis,"Inspect selected scan",[this]{int i=scans->currentRow();if(i<0)return;auto mesh=document.project.scans[i].mesh;auto result=std::make_shared<QString>();
       runJob("Inspecting geometry",[mesh,result](const zahn::Checkpoint& check){*result=QString::fromStdString(zahn::inspect(*mesh,check).text());},
         [this,result]{QMessageBox::information(this,"Geometry diagnostics",*result);});});
-    action(menu,"Export research STL…",[this]{int i=scans->currentRow();if(i<0)return;auto file=QFileDialog::getSaveFileName(this,"Export research geometry",{},"STL (*.stl)");if(file.isEmpty())return;
+    action(exportMenu,"Export research STL…",[this]{int i=scans->currentRow();if(i<0)return;auto file=QFileDialog::getSaveFileName(this,"Export research geometry",{},"STL (*.stl)");if(file.isEmpty())return;
       auto mesh=document.project.scans[i].mesh;runJob("Exporting research STL",[mesh,file](const zahn::Checkpoint&){zahn::writeStl(*mesh,zahn::nativePath(file));},[]{},false);});
-    auto* camera=menuBar()->addMenu("View");
+    navigationAction=action(camera,"Navigate",[this]{cancelPointTool();setBrushActive(false);boxWidget->Off();setMeasuring(false);});
+    navigationAction->setCheckable(true);
     action(camera,"Toggle scan colors",[this]{showColors=!showColors;for(auto& [key,item]:cache)item.mapper->SetScalarVisibility(showColors);render->Render();});
     action(camera,"Toggle face normals",[this]{showNormals=!showNormals;updateSelection();});
-    auto* preparation=menuBar()->addMenu("Prepare scan");
-    brushAction=action(preparation,"Vertex brush",[this]{toggleBrush();});brushAction->setCheckable(true);tools->addAction(brushAction);
+    brushAction=action(preparation,"Vertex brush",[this]{toggleBrush();});brushAction->setCheckable(true);
     action(preparation,"Exit active point tool",[this]{cancelPointTool();setBrushActive(false);});
     action(preparation,"Smaller brush",[this]{brushRadius->setValue(brushRadius->value()-5);});
     action(preparation,"Larger brush",[this]{brushRadius->setValue(brushRadius->value()+5);});
     action(preparation,"Clear vertex selection",[this]{selectedVertices.clear();updateSelection();});
-    action(preparation,"Toggle crop/selection box",[this]{int i=scans->currentRow();if(i<0)return;if(boxWidget->GetEnabled()){boxWidget->Off();return;}cancelPointTool();setBrushActive(false);setMeasuring(false);auto* bounds=cache.at(document.project.scans[i].mesh.get()).geometry.full->GetBounds();double b[6];std::copy(bounds,bounds+6,b);for(int k=0;k<3;++k)if(b[k*2+1]-b[k*2]<0.001){b[k*2]-=0.001;b[k*2+1]+=0.001;}boxRepresentation->SetPlaceFactor(1);boxRepresentation->PlaceWidget(b);boxWidget->On();render->Render();});
+    boxAction=action(preparation,"Toggle crop/selection box",[this]{int i=scans->currentRow();if(i<0)return;if(boxWidget->GetEnabled()){boxWidget->Off();render->Render();return;}cancelPointTool();setBrushActive(false);setMeasuring(false);auto* bounds=cache.at(document.project.scans[i].mesh.get()).geometry.full->GetBounds();double b[6];std::copy(bounds,bounds+6,b);for(int k=0;k<3;++k)if(b[k*2+1]-b[k*2]<0.001){b[k*2]-=0.001;b[k*2+1]+=0.001;}boxRepresentation->SetPlaceFactor(1);boxRepresentation->PlaceWidget(b);boxWidget->On();render->Render();});
+    boxAction->setCheckable(true);
     action(preparation,"Select vertices inside box",[this]{int i=scans->currentRow();if(i<0)return;auto mesh=document.project.scans[i].mesh;auto box=currentBox();auto selection=std::make_shared<std::set<VertexKey>>();runJob("Selecting vertices",[mesh,box,selection](const zahn::Checkpoint& check){size_t index=0;for(auto& triangle:mesh->triangles){if(index++%1024==0&&check)check();for(auto p:triangle.v)if(p.x>=box.minimum.x&&p.x<=box.maximum.x&&p.y>=box.minimum.y&&p.y<=box.maximum.y&&p.z>=box.minimum.z&&p.z<=box.maximum.z)selection->insert({p.x,p.y,p.z});}},[this,selection]{selectedVertices=*selection;updateSelection();});});
     auto selectedParameters=[this](zahn::Operation operation){zahn::Parameters p;p.operation=operation;for(auto v:selectedVertices)p.selectedVertices.push_back({v[0],v[1],v[2]});return p;};
     action(preparation,"Keep selected vertices…",[this,selectedParameters]{editSurface(selectedParameters(zahn::Operation::KeepSelected),"Keep selected vertices");});
@@ -881,10 +1567,27 @@ public:
     action(preparation,"Fill small holes…",[this]{bool ok;double radius=QInputDialog::getDouble(this,"Fill small holes","Approximate maximum hole radius (mm); outer boundaries can also be filled",0.5,0.001,50,3,&ok);if(!ok)return;zahn::Parameters p;p.operation=zahn::Operation::FillHoles;p.value=radius;editSurface(p,"Fill small holes");});
     action(preparation,"Smooth with fixed boundary…",[this]{bool ok;int iterations=QInputDialog::getInt(this,"Smooth scan","Iterations (boundary vertices stay fixed)",10,1,100,1,&ok);if(!ok)return;double tolerance=QInputDialog::getDouble(this,"Deviation threshold","Maximum sampled deviation (mm); not a certified bound",0.05,0.000001,100,6,&ok);if(!ok)return;zahn::Parameters p;p.operation=zahn::Operation::Smooth;p.value=0.1;p.iterations=iterations;editSurface(p,"Smooth scan",tolerance);});
     action(preparation,"Simplify with topology preservation…",[this]{bool ok;int reduction=QInputDialog::getInt(this,"Simplify scan","Target triangle reduction (%); boundaries and topology constrain the result",50,1,95,1,&ok);if(!ok)return;double tolerance=QInputDialog::getDouble(this,"Deviation threshold","Maximum sampled deviation (mm); not a certified bound",0.05,0.000001,100,6,&ok);if(!ok)return;zahn::Parameters p;p.operation=zahn::Operation::Simplify;p.value=reduction/100.;editSurface(p,"Simplify scan",tolerance);});
-    action(preparation,"Restore original scan",[this]{cancelPointTool();int i=scans->currentRow();if(i<0)return;auto scan=document.project.scans[i];if(!scan.sourceMesh||scan.mesh==scan.sourceMesh)return;scan.mesh=scan.sourceMesh;scan.operations={};scan.margin.clear();auto result=std::make_shared<zahn::DisplayMesh>();runJob("Restoring original",[scan,result](const zahn::Checkpoint& check){*result=zahn::prepareDisplay(scan.mesh,check);},[this,i,scan,result]{addDisplay(std::move(*result));document.replaceScan(size_t(i),scan,"Restore original scan");syncScene();});});
+    action(preparation,"Restore original scan",[this]{
+      cancelPointTool();
+      const int row=scans->currentRow();
+      if(row<0)return;
+      auto scan=document.project.scans[row];
+      if(!scan.sourceMesh||scan.mesh==scan.sourceMesh)return;
+      scan.mesh=scan.sourceMesh;
+      scan.operations=scan.format=="zmesh"&&!scan.operations.isEmpty()?QJsonArray{scan.operations.first()}:QJsonArray{};
+      scan.margin.clear();
+      auto result=std::make_shared<zahn::DisplayMesh>();
+      runJob("Restoring original",[mesh=scan.mesh,result](const zahn::Checkpoint& check){
+        *result=zahn::prepareDisplay(mesh,check);
+      },[this,row,scan,result]{
+        addDisplay(std::move(*result));
+        document.replaceScan(size_t(row),scan,"Restore original scan");
+        syncScene();
+      });
+    });
     preparation->addSeparator();
-    action(preparation,"Register using landmarks…",[this]{startRegistration();});
-    auto* margin=preparation->addMenu("Margin");
+    action(scan,"Register using landmarks…",[this]{startRegistration();});
+    action(margin,"Select tooth markup…",[this]{selectTooth();});
     action(margin,"Trace or edit margin",[this]{startMargin();});
     action(margin,"Remove last draft point",[this]{
       if(pointTool!=PointTool::Margin||draft.empty())return;
@@ -894,15 +1597,27 @@ public:
     });
     action(margin,"Apply margin",[this]{applyMargin();});
     action(margin,"Clear saved margin",[this]{applyMargin(true);});
-    action(preparation,"Analyze insertion from view",[this]{analyzeCurrentInsertion();});
-    action(preparation,"Clear insertion overlay",[this]{clearInsertion();render->Render();});
+    action(margin,"Build research crown…",[this]{createResearchCrown();});
+    action(analysis,"Analyze insertion from view",[this]{analyzeCurrentInsertion();});
+    action(analysis,"Measure surface separation…",[this]{measureSeparation();});
+    action(analysis,"Set up reference measurement…",[this]{setupReferenceMeasurement();});
+    action(analysis,"Record ruler reading",[this]{recordReferenceReading();});
+    action(analysis,"Export reference CSV…",[this]{
+      if(!document.project.reference||document.project.reference->readings.empty())
+        throw std::runtime_error("Record a reference reading before exporting");
+      const auto file=QFileDialog::getSaveFileName(this,"Export reference measurements",{},"CSV (*.csv)");
+      if(!file.isEmpty())exportReferenceCsv(file);
+    });
+    action(analysis,"Clear insertion overlay",[this]{clearInsertion();render->Render();});
     action(preparation,"Block out from view…",[this]{blockoutCurrent();});
     action(camera,"Fit",[this]{renderer->ResetCamera();render->Render();});
     action(camera,"Orthographic / perspective",[this]{auto* c=renderer->GetActiveCamera();c->SetParallelProjection(!c->GetParallelProjection());render->Render();});
     auto orient=[this](double x,double y,double z){auto* c=renderer->GetActiveCamera();c->SetFocalPoint(0,0,0);c->SetPosition(x,y,z);c->SetViewUp(0,z?1:0,z?0:1);renderer->ResetCamera();render->Render();};
     action(camera,"Occlusal",[orient]{orient(0,0,1);});action(camera,"Front",[orient]{orient(0,-1,0);});action(camera,"Side",[orient]{orient(1,0,0);});
-    action(camera,"Toggle distance measurement",[this]{cancelPointTool();setBrushActive(false);boxWidget->Off();setMeasuring(!measuring);});
-    action(camera,"Toggle axial clipping",[this]{clip=!clip;syncScene();});
+    measureAction=action(camera,"Toggle distance measurement",[this]{cancelPointTool();setBrushActive(false);boxWidget->Off();setMeasuring(!measuring);});
+    measureAction->setCheckable(true);
+    clipAction=action(camera,"Toggle axial clipping",[this]{clip=!clip;syncScene();});
+    clipAction->setCheckable(true);
     action(camera,"Screenshot…",[this]{auto file=QFileDialog::getSaveFileName(this,"Screenshot",{},"PNG (*.png)");if(!file.isEmpty())saveScreenshot(file);});
     action(camera,"Orbit left",[this]{renderer->GetActiveCamera()->Azimuth(-15);render->Render();});
     action(camera,"Orbit right",[this]{renderer->GetActiveCamera()->Azimuth(15);render->Render();});
@@ -927,16 +1642,33 @@ public:
     }
     redoAction->setShortcuts({QKeySequence("Ctrl+Y"),QKeySequence("Ctrl+Shift+Z")});
     auto* help=menuBar()->addMenu("Help");action(help,"Keyboard and mouse controls",[this,bindings]{QString text="Vertex brush: left-drag adds; Shift+left erases. Right-drag orbits; Shift+right pans; wheel zooms. Middle drag is disabled while brushing. Orange points are selected vertices.\n\n";for(auto& [label,key]:bindings)text+=key+" — "+label+"\n";QMessageBox::information(this,"Keyboard and mouse controls",text);})->setShortcut(QKeySequence("F12"));
+    buildWorkbench(actions,{scan,preparation,margin,analysis,exportMenu},z);
     auto* timer=new QTimer(this);connect(timer,&QTimer::timeout,this,[this]{autosave();});timer->start(60000);
-    statusBar()->showMessage("Research preview · Full-resolution data retained for measurement and export");refreshTitle();syncOpacity();
+    statusBar()->showMessage("Research preview · Full-resolution data retained for measurement and export",5500);refreshTitle();syncOpacity();
     if(smokeMode==SmokeMode::None &&
       (QFile::exists(directory+"/recovery.zahncad")||QFile::exists(directory+"/recovery.previous.zahncad")))
       QTimer::singleShot(0,this,[this]{if(QMessageBox::question(this,"Recovery available","Recover the last autosaved case? If the latest is damaged, the previous snapshot will be tried.")==QMessageBox::Yes)guarded([this]{loadCase({},true);});});
   }
   void stage2Smoke(const QString& source,const QString& screenshot){
     loadScan(source,"Reference",1,[this,screenshot]{guarded([this,screenshot]{
+      auto* stages=workbench->findChild<QButtonGroup*>();
+      auto* workflow=qobject_cast<QStackedWidget*>(inspector->widget(1));
+      stages->button(0)->click();
+      if(inspector->currentWidget()!=workflow || workflow->currentIndex()!=0)
+        throw std::runtime_error("Scan stage did not open its workflow");
+      stages->button(1)->click();
+      if(workflow->currentIndex()!=1)throw std::runtime_error("Prepare workflow did not open");
+
+      const auto buttons=workbench->findChildren<QToolButton*>();
+      const auto brushButton=std::find_if(buttons.begin(),buttons.end(),[](const auto* button){
+        return button->accessibleName()=="Vertex brush";
+      });
+      if(brushButton==buttons.end())throw std::runtime_error("Brush button missing");
       auto original=document.project.scans[0].mesh;auto vertex=original->triangles[0].v;
-      cache.at(original.get()).brush=std::make_shared<zahn::BrushIndex>(zahn::prepareBrush(cache.at(original.get()).geometry.full));setBrushActive(true);view->grabFramebuffer();
+      cache.at(original.get()).brush=std::make_shared<zahn::BrushIndex>(zahn::prepareBrush(cache.at(original.get()).geometry.full));
+      (*brushButton)->click();
+      if(!picking || inspector->currentIndex()!=0)throw std::runtime_error("Brush button did not activate Tool Properties");
+      view->grabFramebuffer();
       auto* camera=renderer->GetActiveCamera();double cameraPosition[3],focalPoint[3],viewUp[3];camera->GetPosition(cameraPosition);camera->GetFocalPoint(focalPoint);camera->GetViewUp(viewUp);
       auto first=vertex[0];renderer->SetWorldPoint(first.x,first.y,first.z,1);renderer->WorldToDisplay();auto* position=renderer->GetDisplayPoint();int px=int(std::lround(position[0])),py=int(std::lround(position[1]));
       auto* interactor=render->GetInteractor();interactor->SetEventPosition(px,py);interactor->InvokeEvent(vtkCommand::LeftButtonPressEvent);interactor->SetEventPosition(px+8,py+6);interactor->InvokeEvent(vtkCommand::MouseMoveEvent);interactor->InvokeEvent(vtkCommand::LeftButtonReleaseEvent);
@@ -1096,13 +1828,28 @@ public:
   void analysisSmoke(const QString& source,const QString& screenshot) {
     constexpr zahn::LandmarkTriplet points{{{2,2,0},{7,2,0},{2,7,0}}};
     loadScan(source,"Upper jaw",1,[this,source,screenshot,points]{
+      if(smokeMode==SmokeMode::Crown){
+        QTimer::singleShot(0,this,[this,screenshot]{
+          auto* chart=findChild<QDialog*>("tooth-chart");
+          if(!chart){reportFailure("Crown smoke","Tooth chart did not open");return;}
+          auto* selected=chart->findChild<QPushButton*>("tooth-16");
+          auto* lower=chart->findChild<QPushButton*>("tooth-46");
+          if(selected&&lower&&!lower->isEnabled()&&chart->grab().save(screenshot+".teeth.png","PNG"))selected->click();
+          else chart->reject();
+        });
+        selectTooth();
+        document.history.undo();
+        if(document.project.scans.at(0).toothFdi!=0)throw std::runtime_error("Tooth markup undo failed");
+        document.history.redo();
+        if(document.project.scans.at(0).toothFdi!=16)throw std::runtime_error("Tooth chart selection or redo failed");
+      }
       startMargin();
       for(const auto& point:points)clickSurface(point);
       clickSurface({2.1,2,0},true);
       applyMargin();
       if(document.project.scans[0].margin.size()!=3||document.project.scans[0].margin[0].x<2.05)
         throw std::runtime_error("Margin trace or point move failed");
-      loadScan(source,"Reference",1,[this,screenshot,points]{
+      loadScan(source,"Restoration candidate",1,[this,screenshot,points]{
         auto fixed=document.project.scans[1];
         zahn::RigidAlignment translation;
         translation.matrix={1,0,0,0,0,1,0,0,0,0,1,2,0,0,0,1};
@@ -1110,18 +1857,62 @@ public:
         addDisplay(zahn::prepareDisplay(fixed.mesh));
         document.replaceScan(1,std::move(fixed),"Place synthetic fixed scan");
         syncScene();
-        beginRegistration(0,1);
-        for(const auto& point:points)clickSurface(point);
-        for(auto point:points){point.z=2;clickSurface(point);}
-        if(!busy)throw std::runtime_error("Landmark picking did not start registration");
-        auto* timer=new QTimer(this);
-        connect(timer,&QTimer::timeout,this,[this,timer,screenshot]{
-          if(busy)return;
-          timer->stop();
-          timer->deleteLater();
-          guarded([this,screenshot]{verifyAnalysis(screenshot);});
+        measureSeparationBetween(1,0,[this,screenshot,points](const auto& report){
+          if(std::abs(report.minimum-2)>1e-9||report.samples!=16||
+             report.onFirst.z!=2||report.onSecond.z!=0)
+            throw std::runtime_error("Sampled surface separation did not match the 2 mm offset");
+          qInfo("Sampled surface separation: %.3f mm (expected 2 mm)",report.minimum);
+          beginRegistration(0,1);
+          for(const auto& point:points)clickSurface(point);
+          for(auto point:points){point.z=2;clickSurface(point);}
+          if(!busy)throw std::runtime_error("Landmark picking did not start registration");
+          auto* timer=new QTimer(this);
+          connect(timer,&QTimer::timeout,this,[this,timer,screenshot]{
+            if(busy)return;
+            timer->stop();
+            timer->deleteLater();
+            guarded([this,screenshot]{verifyAnalysis(screenshot);});
+          });
+          timer->start(20);
         });
-        timer->start(20);
+      });
+    });
+  }
+  void referenceSmoke(const QString& source,const QString& screenshot) {
+    loadScan(source,"Reference",1,[this,screenshot]{
+      QTimer::singleShot(0,this,[this]{
+        auto* dialog=findChild<QDialog*>("reference-measurement");
+        dialog->findChild<QLineEdit*>("landmarks")->setText("(2, 2) to (7, 2)");
+        dialog->findChild<QLineEdit*>("method")->setText("Synthetic geometry");
+        dialog->findChild<QLineEdit*>("notes")->setText("=Synthetic, \"control\"");
+        dialog->findChild<QDoubleSpinBox*>("expected")->setValue(5);
+        dialog->findChild<QDoubleSpinBox*>("tolerance")->setValue(0.05);
+        dialog->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Save)->click();
+      });
+      setupReferenceMeasurement();
+      setMeasuring(true);
+      clickSurface({2,2,0});
+      clickSurface({7,2,0});
+      recordReferenceReading();
+      const auto project=screenshot+".zahncad";
+      saveTo(project);
+      loadCase(project,false,[this,screenshot]{
+        setMeasuring(true);
+        clickSurface({2,2,0});
+        clickSurface({7,2,0});
+        recordReferenceReading();
+        clickSurface({2,2,0});
+        clickSurface({6.8,2,0});
+        recordReferenceReading();
+        const auto& review=*document.project.reference;
+        const auto& readings=review.readings;
+        if(readings.size()!=3||readings[0].afterReopen||!readings[1].afterReopen||
+           std::abs(readings[0].measuredMm-5)>0.05||std::abs(readings[1].measuredMm-5)>0.05||
+           readingSpread(review)<0.1||readingSpread(review)>0.3)
+          throw std::runtime_error("Reference reading or reopen checks failed");
+        exportReferenceCsv(screenshot+".csv");
+        saveTo(screenshot+".zahncad");
+        QApplication::exit(grab().save(screenshot)?0:2);
       });
     });
   }
@@ -1140,6 +1931,8 @@ public:
     saveScreenshot(screenshot);
     saveTo(screenshot+".zahncad");
     const auto reopened=zahn::loadProject(screenshot+".zahncad");
+    if(reopened.scans.at(1).role!="Restoration candidate")
+      throw std::runtime_error("Restoration candidate role failed to reopen");
     if(reopened.scans.at(0).margin.size()!=3||std::abs(reopened.scans.at(0).margin.at(0).z-2)>0.001)
       throw std::runtime_error("Saved registered margin failed to reopen");
     blockoutScan(0,{0,0,1},0.5,[this,screenshot]{
@@ -1147,7 +1940,51 @@ public:
         throw std::runtime_error("Blockout did not record its derived geometry");
       saveTo(screenshot+".blockout.zahncad");
       saveScreenshot(screenshot+".blockout.png");
-      QApplication::exit(0);
+      if(smokeMode==SmokeMode::Crown){
+        document.history.undo();
+        syncScene();
+        verifyCrown(screenshot);
+      }else QApplication::exit(0);
+    });
+  }
+  void verifyCrown(const QString& screenshot) {
+    const auto preparation=document.project.scans.at(0);
+    if(preparation.toothFdi!=16||preparation.margin.size()!=3||preparation.operations.size()!=1)
+      throw std::runtime_error("Tooth markup and margin did not survive registration and blockout undo");
+    auto* camera=renderer->GetActiveCamera();
+    camera->SetPosition(0,0,1);
+    camera->SetFocalPoint(0,0,0);
+    camera->SetViewUp(0,1,0);
+    renderer->ResetCamera();
+    createResearchCrown(5,[this,screenshot,preparation]{
+      if(document.project.scans.size()!=3||document.project.scans.at(0).mesh!=preparation.mesh)
+        throw std::runtime_error("Adding a crown changed the preparation scan");
+      document.history.undo();
+      if(document.project.scans.size()!=2)throw std::runtime_error("Crown undo failed");
+      document.history.redo();
+      syncScene();
+      auto* camera=renderer->GetActiveCamera();
+      camera->Azimuth(25);
+      camera->Elevation(35);
+      camera->OrthogonalizeViewUp();
+      renderer->ResetCamera();
+      saveScreenshot(screenshot+".crown.png");
+      const auto project=screenshot+".crown.zahncad";
+      saveTo(project);
+      loadCase(project,false,[this]{
+        const auto& base=document.project.scans.at(0);
+        const auto& crown=document.project.scans.at(2);
+        const auto geometry=zahn::inspect(*crown.mesh);
+        if(base.toothFdi!=16||base.margin.size()!=3||crown.toothFdi!=16||crown.format!="zmesh"||
+           crown.role!="Restoration candidate"||crown.sourceMesh!=crown.mesh||crown.operations.size()!=1||
+           !geometry.closed()||std::abs(geometry.maximum.z-7)>0.001)
+          throw std::runtime_error("Crown geometry, provenance or tooth markup did not reopen");
+        measureSeparationBetween(2,0,[](const auto& report){
+          if(report.minimum>0.001)throw std::runtime_error("Crown rim did not meet the registered margin plane");
+          qInfo("Tooth 16 crown passed closed-mesh, persistence and sampled rim checks");
+          QApplication::exit(0);
+        });
+      });
     });
   }
 };
@@ -1160,10 +1997,14 @@ int main(int argc,char** argv) {
     if(args[1]=="--smoke-test")mode=SmokeMode::Viewer;
     if(args[1]=="--stage2-smoke-test")mode=SmokeMode::Preparation;
     if(args[1]=="--m2-smoke-test")mode=SmokeMode::Analysis;
+    if(args[1]=="--m3-smoke-test")mode=SmokeMode::Crown;
+    if(args[1]=="--m0-reference-smoke-test")mode=SmokeMode::Reference;
     if(args[1]=="--recovery-smoke-write")mode=SmokeMode::RecoveryWrite;
     if(args[1]=="--recovery-smoke-read")mode=SmokeMode::RecoveryRead;
   }
   app.setApplicationName("ZahnCAD");
+  app.setApplicationVersion(ZAHNCAD_VERSION);
+  styleWorkbench(app);
   auto directory=QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
   std::optional<QTemporaryDir> testDirectory;
   if(mode==SmokeMode::RecoveryWrite||mode==SmokeMode::RecoveryRead){
@@ -1188,7 +2029,8 @@ int main(int argc,char** argv) {
   window.show();
   if(mode==SmokeMode::Viewer)window.smokeTest(args[2],args[3]);
   if(mode==SmokeMode::Preparation)window.stage2Smoke(args[2],args[3]);
-  if(mode==SmokeMode::Analysis)window.analysisSmoke(args[2],args[3]);
+  if(mode==SmokeMode::Analysis||mode==SmokeMode::Crown)window.analysisSmoke(args[2],args[3]);
+  if(mode==SmokeMode::Reference)window.referenceSmoke(args[2],args[3]);
   if(mode==SmokeMode::RecoveryWrite)window.recoveryWriteSmoke(args[3]);
   if(mode==SmokeMode::RecoveryRead)window.recoveryReadSmoke(args[3]);
   return app.exec();

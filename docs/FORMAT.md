@@ -1,6 +1,6 @@
 # ZahnCAD project format
 
-A ZIP contains `manifest.json`, `sources/N.stl|ply|obj`, and optional
+A ZIP contains `manifest.json`, `sources/N.stl|ply|obj|zmesh`, and optional
 `meshes/N.zmesh`. Paths are archive keys and are never extracted to disk.
 Archive bytes and expanded data are limited to 1 GiB, entries to 512 MiB and
 entry count to 128. Writers limit cases to 63 scans to allow source/current
@@ -25,7 +25,23 @@ Blockout records its insertion axis and grid spacing. The current mesh stores
 the edited result. Undo history and temporary selections are session state.
 
 Version 1 remains readable. Source format defaults to STL, the scaled source is
-the current mesh and operations are empty. Saving cases without margins writes
-version 2. A saved margin requires version 3. Its scan contains `marginMm`, an
-ordered array of 3–10,000 XYZ triples in current-mesh coordinates. The closing
-segment connects the last point to the first.
+the current mesh and operations are empty. Cases use the lowest version that
+can represent their contents, starting at version 2. A saved margin requires
+version 3. Its scan contains `marginMm`, an ordered array of 3–10,000 XYZ triples
+in current-mesh coordinates. The closing segment connects the last point to the
+first.
+
+Version 4 adds optional `toothFdi`, a permanent tooth number (11–18, 21–28,
+31–38 or 41–48), and generated sources. A generated crown uses `sourceFormat`
+`zmesh`, with its original generated geometry stored in `ZMSH1` at scale 1.
+Subsequent geometry edits use the same optional `current` entry as imported
+scans. The crown operation records the preparation scan name, the insertion
+axis and the requested height.
+
+Version 5 adds an optional top-level `referenceMeasurement` record. It stores
+`landmarks`, `method`, `notes`, `expectedMm`, `toleranceMm` and up to 200
+`readings`. Each reading stores its scan name and role, source SHA-256,
+scale-to-mm factor, measured distance in mm, reopen flag, application version,
+platform and UTC capture time. Readers preserve compatibility with versions
+1–4. The CSV derives signed errors, tolerance results and repeat spread from
+these stored readings.

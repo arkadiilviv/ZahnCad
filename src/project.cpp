@@ -20,7 +20,55 @@ namespace zahn {
 namespace {
 constexpr qsizetype maxManifestBytes=64*1024*1024;
 void check(bool ok,const char* message) {if(!ok)throw std::runtime_error(message);}
-bool supportedVersion(int version) { return version>=1&&version<=3; }
+bool supportedVersion(int version) { return version>=1&&version<=5; }
+void validateReference(const ReferenceMeasurement& reference) {
+  check(!reference.landmarks.trimmed().isEmpty()&&reference.landmarks.size()<=1024&&
+        !reference.method.trimmed().isEmpty()&&reference.method.size()<=1024&&reference.notes.size()<=2048&&
+        std::isfinite(reference.expectedMm)&&reference.expectedMm>0&&
+        std::isfinite(reference.toleranceMm)&&reference.toleranceMm>=0&&
+        reference.readings.size()<=ReferenceMeasurement::readingLimit,"Invalid reference measurement setup");
+  for(const auto& reading:reference.readings){
+    const auto sha=reading.sourceSha256.toLatin1();
+    check(reading.scanName.size()<=1024&&reading.scanRole.size()<=1024&&
+          sha.size()==64&&QByteArray::fromHex(sha).toHex()==sha&&
+          !reading.appVersion.isEmpty()&&reading.appVersion.size()<=64&&reading.platform.size()<=256&&
+          !reading.capturedUtc.isEmpty()&&reading.capturedUtc.size()<=64&&
+          std::isfinite(reading.scaleToMm)&&reading.scaleToMm>0&&
+          std::isfinite(reading.measuredMm)&&reading.measuredMm>=0,"Invalid reference reading");
+    check(reading.sourceSha256==reference.readings.front().sourceSha256&&
+          reading.scaleToMm==reference.readings.front().scaleToMm,"Reference readings use different geometry or scale");
+  }
+}
+QJsonObject encodeReference(const ReferenceMeasurement& reference) {
+  validateReference(reference);
+  QJsonArray readings;
+  for(const auto& reading:reference.readings)
+    readings.append(QJsonObject{{"scanName",reading.scanName},{"scanRole",reading.scanRole},
+      {"sourceSha256",reading.sourceSha256},{"appVersion",reading.appVersion},
+      {"platform",reading.platform},{"capturedUtc",reading.capturedUtc},
+      {"scaleToMm",reading.scaleToMm},{"measuredMm",reading.measuredMm},{"afterReopen",reading.afterReopen}});
+  return {{"landmarks",reference.landmarks},{"method",reference.method},{"notes",reference.notes},
+    {"expectedMm",reference.expectedMm},{"toleranceMm",reference.toleranceMm},{"readings",readings}};
+}
+ReferenceMeasurement decodeReference(const QJsonValue& value) {
+  const auto data=value.toObject();
+  check(data["notes"].isString()&&data["readings"].isArray(),"Invalid reference measurement metadata");
+  ReferenceMeasurement reference{data["landmarks"].toString(),data["method"].toString(),data["notes"].toString(),
+    data["expectedMm"].toDouble(-1),data["toleranceMm"].toDouble(-1)};
+  const auto readings=data["readings"].toArray();
+  check(readings.size()<=qsizetype(ReferenceMeasurement::readingLimit),"Too many reference readings");
+  for(const auto& item:readings){
+    const auto reading=item.toObject();
+    check(reading["scanName"].isString()&&reading["scanRole"].isString()&&reading["afterReopen"].isBool(),
+          "Invalid reference reading metadata");
+    reference.readings.push_back({reading["scanName"].toString(),reading["scanRole"].toString(),
+      reading["sourceSha256"].toString(),reading["appVersion"].toString(),
+      reading["platform"].toString(),reading["capturedUtc"].toString(),
+      reading["scaleToMm"].toDouble(-1),reading["measuredMm"].toDouble(-1),reading["afterReopen"].toBool()});
+  }
+  validateReference(reference);
+  return reference;
+}
 bool validMarginPoint(Vec3 p) {
   return std::isfinite(p.x)&&std::isfinite(p.y)&&std::isfinite(p.z)&&
     std::max({std::abs(p.x),std::abs(p.y),std::abs(p.z)})<=1e8;
@@ -97,7 +145,19 @@ Scan importScan(const QString& path,const QString& role,double scale,const Check
 }
 void saveProject(const Project& p,const QString& path) {
   check(p.scans.size()<64,"Too many scans for this project format");
-  quint64 total=0;for(auto& scan:p.scans){check(scan.original.size()<=512ll*1024*1024,"Scan exceeds project entry limit");total+=quint64(scan.original.size());if(scan.sourceMesh&&scan.mesh!=scan.sourceMesh){check(bool(scan.mesh),"Missing current geometry");total+=14+scan.mesh->triangles.size()*(scan.mesh->colors.empty()?72ull:81ull);}}
+  auto encodedSize=[](const std::shared_ptr<const Mesh>& mesh){
+    check(bool(mesh),"Missing project geometry");
+    return 14+mesh->triangles.size()*(mesh->colors.empty()?72ull:81ull);
+  };
+  quint64 total=0;
+  for(const auto& scan:p.scans){
+    check(scan.original.size()<=512ll*1024*1024,"Scan exceeds project entry limit");
+    if(scan.format=="zmesh"){
+      check(scan.scale==1&&scan.original.isEmpty(),"Invalid generated source");
+      total+=encodedSize(scan.sourceMesh);
+    }else total+=quint64(scan.original.size());
+    if(scan.sourceMesh&&scan.mesh!=scan.sourceMesh)total+=encodedSize(scan.mesh);
+  }
   check(total<=1000ull*1024*1024,"Project exceeds safe expanded-size limit");
   QSaveFile file(path);check(file.open(QIODevice::WriteOnly),"Cannot save project");
   std::unique_ptr<archive,decltype(&archive_write_free)> a(archive_write_new(),archive_write_free);
@@ -112,7 +172,10 @@ void saveProject(const Project& p,const QString& path) {
     QString entry=QString("sources/%1.%2").arg(i).arg(s.format);
     QJsonObject item{{"name",s.name},{"role",s.role},{"source",entry},{"sourceFormat",s.format},
       {"scaleToMm",s.scale},{"visible",s.visible},{"opacity",s.opacity},{"operations",s.operations}};
-    add(entry,s.original);
+    if(s.format=="zmesh"){
+      add(entry,encodeMesh(*s.sourceMesh));
+      version=4;
+    }else add(entry,s.original);
     if(s.sourceMesh&&s.mesh!=s.sourceMesh){
       QString current=QString("meshes/%1.zmesh").arg(i);
       add(current,encodeMesh(*s.mesh));
@@ -120,12 +183,21 @@ void saveProject(const Project& p,const QString& path) {
     }
     if(!s.margin.empty()){
       item["marginMm"]=encodeMargin(s.margin);
-      version=3;
+      version=std::max(version,3);
+    }
+    if(s.toothFdi){
+      check(validToothFdi(s.toothFdi),"Invalid FDI tooth number");
+      item["toothFdi"]=s.toothFdi;
+      version=4;
     }
     scans.append(item);
   }
-  const auto manifest=QJsonDocument(QJsonObject{{"format","ZahnCAD"},{"version",version},
-    {"caseId",p.id},{"units","mm"},{"scans",scans}}).toJson(QJsonDocument::Compact);
+  QJsonObject root{{"format","ZahnCAD"},{"version",version},{"caseId",p.id},{"units","mm"},{"scans",scans}};
+  if(p.reference){
+    root["referenceMeasurement"]=encodeReference(*p.reference);
+    root["version"]=5;
+  }
+  const auto manifest=QJsonDocument(root).toJson(QJsonDocument::Compact);
   check(manifest.size()<=maxManifestBytes&&total+quint64(manifest.size())<=1024ull*1024*1024,
         "Project manifest or expanded size exceeds limit");
   add("manifest.json",manifest);
@@ -141,6 +213,7 @@ Project loadProject(const QString& path,const Checkpoint& checkpoint) {
   check(status==ARCHIVE_EOF,"Corrupt ZIP");QJsonParseError error;auto doc=QJsonDocument::fromJson(entries["manifest.json"],&error);check(error.error==QJsonParseError::NoError&&doc.isObject(),"Invalid manifest");auto root=doc.object();int version=root["version"].toInt(-1);check(root["format"]=="ZahnCAD"&&supportedVersion(version),"Unsupported project format/version");check(root["units"]=="mm"&&root["scans"].isArray(),"Invalid project metadata");
   Project p;
   p.id=root["caseId"].toString();
+  if(version>=5&&root.contains("referenceMeasurement"))p.reference=decodeReference(root["referenceMeasurement"]);
   for(auto value:root["scans"].toArray()){
     if(checkpoint)checkpoint();
     const auto o=value.toObject();
@@ -151,12 +224,18 @@ Project loadProject(const QString& path,const Checkpoint& checkpoint) {
     s.opacity=o["opacity"].toDouble(-1);
     s.visible=o["visible"].toBool();
     s.format=version==1?"stl":o["sourceFormat"].toString();
-    check(s.format=="stl"||s.format=="ply"||s.format=="obj","Unsupported source format");
+    const bool generated=version>=4&&s.format=="zmesh";
+    check(generated||s.format=="stl"||s.format=="ply"||s.format=="obj","Unsupported source format");
     check(s.opacity>=0&&s.opacity<=1,"Invalid opacity");
     const auto it=entries.find(o["source"].toString());
     check(it!=entries.end(),"Missing scan");
-    s.original=it->second;
-    s.sourceMesh=std::make_shared<const Mesh>(scaled(parse(s.original,s.format,checkpoint),s.scale,checkpoint));
+    if(generated){
+      check(s.scale==1,"Invalid generated source scale");
+      s.sourceMesh=std::make_shared<const Mesh>(decodeMesh(it->second,checkpoint));
+    }else{
+      s.original=it->second;
+      s.sourceMesh=std::make_shared<const Mesh>(scaled(parse(s.original,s.format,checkpoint),s.scale,checkpoint));
+    }
     s.mesh=s.sourceMesh;
     s.operations=o["operations"].toArray();
     if(o.contains("current")){
@@ -165,6 +244,10 @@ Project loadProject(const QString& path,const Checkpoint& checkpoint) {
       s.mesh=std::make_shared<const Mesh>(decodeMesh(current->second,checkpoint));
     }
     if(version>=3&&o.contains("marginMm"))s.margin=decodeMargin(o["marginMm"]);
+    if(version>=4&&o.contains("toothFdi")){
+      s.toothFdi=o["toothFdi"].toInt();
+      check(validToothFdi(s.toothFdi),"Invalid FDI tooth number");
+    }
     p.scans.push_back(std::move(s));
   }
   return p;

@@ -20,6 +20,13 @@ struct Parameters {
 };
 struct Deviation {double maximum{},rms{};size_t samples{};};
 Deviation deviation(const Mesh&,const Mesh&,const Checkpoint& = {});
+struct SampledSeparation {
+  double minimum{};
+  Vec3 onFirst{}, onSecond{};
+  size_t samples{};
+};
+// Unsigned distance, sampled in both directions. It can miss intersections.
+SampledSeparation sampledSeparation(const Mesh&,const Mesh&,const Checkpoint& = {});
 Mesh processSurface(const Mesh&,const Parameters&,const Checkpoint& = {});
 std::vector<size_t> selectBox(const Mesh&,Box,const Checkpoint& = {});
 }

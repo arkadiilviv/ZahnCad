@@ -23,4 +23,6 @@ struct InsertionReport {
 // one grid spacing below the lowest source point in that coordinate frame.
 InsertionReport analyzeInsertion(const Mesh&, Vec3 axis, const Checkpoint& = {});
 Mesh blockout(const Mesh&, Vec3 axis, double spacing, const Checkpoint& = {});
+Mesh researchCrown(const std::vector<Vec3>& margin, Vec3 axis, double height,
+                   const Checkpoint& = {});
 }

@@ -9,6 +9,7 @@
 #include <vtkStaticCellLocator.h>
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 #include <stdexcept>
 
 namespace zahn {
@@ -87,6 +88,75 @@ Vec3 RigidAlignment::apply(Vec3 p) const {
   return {matrix[0]*p.x+matrix[1]*p.y+matrix[2]*p.z+matrix[3],
           matrix[4]*p.x+matrix[5]*p.y+matrix[6]*p.z+matrix[7],
           matrix[8]*p.x+matrix[9]*p.y+matrix[10]*p.z+matrix[11]};
+}
+
+Mesh researchCrown(const std::vector<Vec3>& margin, Vec3 axis, double height,
+                   const Checkpoint& check) {
+  if(margin.size()<3||margin.size()>10000||!std::isfinite(height)||height<2||height>12)
+    throw std::runtime_error("Use a saved margin and a crown height of 2–12 mm");
+  const auto w=unit(axis);
+  const auto anchor=margin.front();
+  Vec3 center{};
+  double highest=0;
+  for(auto point:margin){
+    checkOutputPoint(point);
+    auto offset=subtract(point,anchor);
+    center=add(center,offset);
+    highest=std::max(highest,dot(offset,w));
+  }
+  center=add(anchor,multiply(center,1.0/margin.size()));
+
+  // ponytail: concentric rings require a convex footprint. Concave margins
+  // need a proper offset and loft to preserve the traced contour.
+  auto outline=margin;
+  auto planar=[&](Vec3 delta){return subtract(delta,multiply(w,dot(delta,w)));};
+  auto signedArea=[&](Vec3 a,Vec3 b){return dot(cross(a,b),w);};
+  double sweep=0;
+  for(size_t i=0;i<outline.size();++i){
+    const auto a=planar(subtract(outline[i],center));
+    const auto b=planar(subtract(outline[(i+1)%outline.size()],center));
+    sweep+=std::atan2(signedArea(a,b),dot(a,b));
+  }
+  if(sweep<0)std::reverse(outline.begin(),outline.end());
+  auto invalidOutline=[] {
+    throw std::runtime_error("Trace a convex margin in order and view it along the insertion direction");
+  };
+  if(std::abs(std::abs(sweep)-2*std::numbers::pi)>1e-5)invalidOutline();
+  for(size_t i=0;i<outline.size();++i){
+    const auto a=planar(subtract(outline[i],center));
+    const auto b=planar(subtract(outline[(i+1)%outline.size()],center));
+    const auto c=planar(subtract(outline[(i+2)%outline.size()],center));
+    const auto edge=subtract(b,a), next=subtract(c,b);
+    if(length(edge)<1e-4||signedArea(a,b)<=1e-8||
+       signedArea(edge,next)<-1e-8*length(edge)*length(next))invalidOutline();
+  }
+
+  const auto roof=add(anchor,multiply(w,highest+height));
+  const auto roofCenter=add(roof,planar(subtract(center,anchor)));
+  const auto cavityCenter=subtract(roofCenter,multiply(w,0.8));
+  auto outerRoof=[&](Vec3 p){return add(roofCenter,multiply(planar(subtract(p,center)),0.85));};
+  auto innerRoof=[&](Vec3 p){return add(cavityCenter,multiply(planar(subtract(p,center)),0.65));};
+  auto innerRim=[&](Vec3 p){return subtract(p,multiply(planar(subtract(p,center)),0.28));};
+  Mesh result;
+  result.triangles.reserve(8*outline.size());
+  auto triangle=[&](Vec3 a,Vec3 b,Vec3 c){
+    for(auto point:{a,b,c})checkOutputPoint(point);
+    result.triangles.push_back({{a,b,c}});
+  };
+  auto quad=[&](Vec3 a,Vec3 b,Vec3 c,Vec3 d){triangle(a,b,c);triangle(a,c,d);};
+  for(size_t i=0;i<outline.size();++i){
+    if(check&&i%1024==0)check();
+    const auto a=outline[i], b=outline[(i+1)%outline.size()];
+    const auto topA=outerRoof(a),topB=outerRoof(b),lipA=innerRim(a),lipB=innerRim(b);
+    const auto insideA=innerRoof(a),insideB=innerRoof(b);
+    quad(a,b,topB,topA);
+    triangle(topA,topB,roofCenter);
+    quad(b,a,lipA,lipB);
+    quad(lipB,lipA,insideA,insideB);
+    triangle(insideB,insideA,cavityCenter);
+  }
+  if(!inspect(result,check).closed())throw std::runtime_error("The crown did not form a closed mesh");
+  return result;
 }
 
 RigidAlignment alignLandmarks(const LandmarkTriplet& moving,const LandmarkTriplet& fixed) {

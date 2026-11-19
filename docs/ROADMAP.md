@@ -22,9 +22,9 @@ M1 still needs broader manual evaluation and real scanner performance
 measurements. M0's external dental reviews and later gates are not completed
 by these software tests.
 
-- **M0 in progress.** The [research evaluation protocol](EVALUATION.md) sets
-  out the draft intended use and records the first synthetic geometry baseline.
-  Representative scans and an external review remain open.
+- **M0 in progress.** The [research evaluation protocol](EVALUATION.md) records
+  the draft intended use, synthetic baseline and initial typodont import and
+  navigation checks. Independent measurements and external review remain open.
 - **M1 software verified.** The viewer checks cover surface measurement,
   two-scan persistence, and forced-close recovery with a damaged latest
   snapshot. CI builds the Windows installer and Linux AppImage.
@@ -35,3 +35,12 @@ by these software tests.
   edits, rigid landmark registration, persistent margin editing, sampled
   insertion analysis and directional blockout. M2 acceptance still needs
   approved representative scans and reference measurements.
+
+- **M3 prototype implemented.** Select a permanent tooth on the FDI chart and
+  use its saved preparation margin to generate a hollow research crown. The
+  candidate can be saved and compared with case surfaces. Anatomical design,
+  a reviewed CC0 anatomy library and physical bench measurements remain open.
+
+- **Desktop UI refresh implemented.** The dark workbench groups current tools
+  into Scan, Prepare, Design, Analyze and Export, with a scene panel, case
+  statistics and Tool Properties beside the viewport.
