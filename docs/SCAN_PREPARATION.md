@@ -70,8 +70,10 @@ manufacturing or clinical suitability.
   the whole draft as one case edit and closes the polyline.
   Use close spacing on curved areas. Geometry-changing preparation clears the
   saved margins on that scan, apart from rigid registration. Undo restores them.
-- Orient the view along a proposed withdrawal direction and choose **Analyze
-  insertion from view**. Orbit to see sampled shadowed triangles in red.
+- Select a tooth, orient the scan, and choose **Design → Set insertion direction
+  from view**. **Analyze → Check insertion undercuts** and crown generation use
+  that tooth’s saved direction after orbiting or reopening the case. Repeat the
+  command to replace it, or use Undo. Teeth without a saved direction use the current view. Orbit to see sampled shadowed triangles in red.
   The report checks up to 100,000 face centroids along parallel rays and gives
   the largest sampled axial depth. Narrow undercuts can fall between samples.
 - **Block out from view** uses the current camera axis and a 0.05–5 mm grid.
@@ -107,14 +109,23 @@ blockout at two grid spacings to record changes in its bounds and surface.
    that scan are teal. **Clear saved margin** affects the active tooth.
 2. Trace and apply a margin around the tooth. For this prototype, trace the
    points in order so the outline is convex when viewed along the insertion
-   direction. Rotate the view to look along that direction before generating.
+   direction. Save the intended insertion direction before generating.
 3. With the intended tooth active, choose **Design → Build research crown**,
    enter a height above the highest
    margin point and inspect the preview. **Apply** adds a separate restoration
    candidate. Changing the scan or margin afterward leaves that candidate as
    built. Generate a fresh candidate after adjusting the preparation.
 
-The prototype uses a tapered wall and a recessed underside with a flat roof.
+For a filed-down tooth, choose **Design → Crown over prepared tooth** after
+applying its convex margin and setting the insertion direction. Set a height
+above the highest margin point and review the candidate. The tool samples the
+first scan surface visible along the insertion axis inside the margin, joins
+the resulting cavity to the traced rim, and closes the exterior with a flat
+roof. Missing interior samples and sampled points reaching the roof stop the
+build. Undercuts and details between samples can be missed. The prototype
+includes no cement-space allowance or physical fit verification.
+
+The margin-only prototype uses a tapered wall and a recessed underside with a flat roof.
 The geometry has no tooth-specific anatomy. Fit, material thickness, occlusion
 and manufacturing suitability remain outside this prototype's checks.
 

@@ -23,9 +23,12 @@ single crowns. Licensed under GPL-3.0-or-later.
 - **Registration and tooth margins.** Align scans using three landmark pairs.
   Save separate margins for multiple FDI teeth on one scan. Insert, move, and
   remove draft points with Undo and Redo.
-- **Insertion, blockout, and research crowns.** Check sampled undercuts from
-  the current view, generate a directional blockout, or build a separate hollow
-  crown candidate from the active tooth's convex margin.
+- **Insertion, blockout, and research crowns.** Save an insertion direction per
+  tooth for undercut analysis and crown generation. Generate a blockout from
+  the current view or build a hollow research crown. For a prepared tooth,
+  sample the scanned surface inside its convex margin to shape the cavity.
+- **Freeform smoothing.** Brush a visible area of a restoration candidate and
+  release to smooth it. Undo or redo individual strokes and reopen the edited case.
 - **Measurement and export.** Measure point-to-point distances and sampled
   surface separation, record repeat readings in a CSV, and export research STL.
   The headless `zahncad-cli` also inspects and converts STL files.

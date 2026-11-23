@@ -19,7 +19,7 @@ public:
   std::function<void(int,int,bool)> paint;
   std::function<void(int,int,bool)> hover;
   std::function<bool(int,int)> measure;
-  std::function<void()> changed,strokeEnded;
+  std::function<void()> changed,strokeEnded,strokeCommitted;
   void setBrush(bool enabled);
   bool brushEnabled() const {return brush_;}
   double radius=30;

@@ -75,3 +75,11 @@ The ruler uses full-resolution geometry and respects axial clipping.
 For Keep, all three corners of a triangle must be selected. Delete removes every
 triangle touching a selected vertex. These operations still use a preview and
 are undoable; no partial edges or orphan points are exported as STL.
+
+## Freeform smoothing
+
+Select a visible **Restoration candidate** and choose **Design → Freeform smooth**.
+The purple viewport border marks sculpting mode. Adjust the brush radius in
+Tool Properties, drag across the visible surface, and release to smooth the
+brushed vertices once. Each stroke is one undoable edit. Right-drag orbits,
+the wheel zooms, and Escape exits. Open mesh boundaries stay fixed.

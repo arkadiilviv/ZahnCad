@@ -28,6 +28,28 @@ void checkResearchCrown(zahn::Scan preparation) {
     require(rejected,"Crossing or concave crown margin accepted");
   }
 
+  const std::vector<zahn::Vec3> rim{{0,0,0},{4,0,0},{4,4,0},{0,4,0}};
+  zahn::Mesh stump;
+  for(size_t i=0;i<rim.size();++i)
+    stump.triangles.push_back({{rim[i],rim[(i+1)%rim.size()],{2,2,3}}});
+  const auto shell=zahn::researchCrown(rim,{0,0,1},5,{},&stump);
+  require(zahn::inspect(shell).closed(),"Prepared-tooth shell is open");
+  bool reachedPeak=false;
+  for(const auto& face:shell.triangles)for(const auto p:face.v){
+    if(std::abs(p.z-5)<1e-8)continue;
+    const double expected=1.5*std::min({p.x,p.y,4-p.x,4-p.y});
+    require(std::abs(p.z-expected)<1e-6,"Cavity missed the preparation surface");
+    if(std::abs(p.z-3)<1e-6)reachedPeak=true;
+  }
+  require(reachedPeak,"Cavity missed the top of the tooth");
+  bool tooShort=false;
+  try{zahn::researchCrown(rim,{0,0,1},2,{},&stump);}catch(const std::runtime_error&){tooShort=true;}
+  require(tooShort,"Crown roof intersecting the preparation was accepted");
+  stump.triangles.pop_back();
+  bool missingScan=false;
+  try{zahn::researchCrown(rim,{0,0,1},5,{},&stump);}catch(const std::runtime_error&){missingScan=true;}
+  require(missingScan,"Missing preparation surface was accepted");
+
   preparation.toothFdi=16;
   preparation.toothMargins[16]=outline;
   zahn::Scan crown;

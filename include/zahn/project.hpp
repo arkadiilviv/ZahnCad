@@ -20,6 +20,7 @@ struct Scan {
   QJsonArray operations;
   // Key 0 preserves an unassigned margin. Numbered teeth may have empty traces.
   std::map<int,std::vector<Vec3>> toothMargins;
+  std::map<int,Vec3> insertionAxes;
   int toothFdi=0;
   bool hasMargins() const;
   void clearMargins();

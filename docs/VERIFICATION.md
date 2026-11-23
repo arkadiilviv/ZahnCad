@@ -231,3 +231,21 @@ inserting points. They also covered insertion on the closing segment,
 invalidation of redo after a new edit, and discarding draft changes without
 altering the saved margin. The packaged viewer smoke passed with the same
 Windows-only PATH. Evidence is in `out/margin-point-edit/packaged/`.
+
+## M3 freeform smoothing on Windows
+
+All four CTest suites passed. The packaged M3 desktop smoke test applied a
+local smoothing stroke to the generated tooth 16 research crown, verified
+that it stayed closed, undid and redid the stroke, and reopened the edited
+project. Comparing the stored source and edited meshes showed that the
+stroke moved one of fourteen unique vertices. The screenshot and case are
+in `out/sculpt-check/`. Sculpting latency on representative scans remains open.
+
+## M3 prepared-tooth crowns on Windows
+
+The surface suite checked a synthetic preparation with a 3 mm peak. The
+sampled cavity followed its slopes and formed a closed shell. A missing
+surface region and a roof below the peak each caused generation to stop.
+All four Windows test suites passed. The packaged desktop generated and saved
+a tooth 16 candidate with the sampled-preparation cavity recorded in its
+project. Physical fit evaluation remains open.

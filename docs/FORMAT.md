@@ -53,3 +53,6 @@ saved margin. Tooth number `0` is reserved for an unassigned trace. The scan's
 own `toothFdi` selects its active tooth. Versions 3–5 and single-tooth entries
 still use the scan-level `marginMm`, which the reader associates with that
 tooth or retains as unassigned.
+
+Version 7 stores optional per-scan `insertionAxes` entries as arrays of FDI tooth
+number and unit direction components (x, y, z) in case coordinates.

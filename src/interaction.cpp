@@ -28,7 +28,7 @@ void InteractionStyle::OnLeftButtonDown(){
 }
 void InteractionStyle::OnLeftButtonUp(){
   if(!brush_){Superclass::OnLeftButtonUp();return;}
-  if(painting_){painting_=false;ReleaseFocus();if(strokeEnded)strokeEnded();}
+  if(painting_){painting_=false;ReleaseFocus();if(strokeCommitted)strokeCommitted();if(strokeEnded)strokeEnded();}
 }
 void InteractionStyle::OnRightButtonDown(){
   if(painting_){painting_=false;ReleaseFocus();if(strokeEnded)strokeEnded();}

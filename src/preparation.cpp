@@ -72,12 +72,12 @@ struct InsertionSurface {
   Vec3 world(Vec3 p) const {
     return add(anchor,add(add(multiply(u,p.x),multiply(v,p.y)),multiply(w,p.z)));
   }
-  bool top(double x,double y,double& z) const {
+  bool top(double x,double y,double& z,double tolerance=0) const {
     const double padding=std::max(1.,bounds[5]-bounds[4]);
     const double from[3]{x,y,bounds[5]+padding}, to[3]{x,y,bounds[4]-padding};
     double t,hit[3],pcoords[3];
     int subId;
-    if(!locator->IntersectWithLine(from,to,0,t,hit,pcoords,subId))return false;
+    if(!locator->IntersectWithLine(from,to,tolerance,t,hit,pcoords,subId))return false;
     z=hit[2];
     return true;
   }
@@ -91,7 +91,7 @@ Vec3 RigidAlignment::apply(Vec3 p) const {
 }
 
 Mesh researchCrown(const std::vector<Vec3>& margin, Vec3 axis, double height,
-                   const Checkpoint& check) {
+                   const Checkpoint& check,const Mesh* preparation) {
   if(margin.size()<3||margin.size()>10000||!std::isfinite(height)||height<2||height>12)
     throw std::runtime_error("Use a saved margin and a crown height of 2–12 mm");
   const auto w=unit(axis);
@@ -144,6 +144,59 @@ Mesh researchCrown(const std::vector<Vec3>& margin, Vec3 axis, double height,
     result.triangles.push_back({{a,b,c}});
   };
   auto quad=[&](Vec3 a,Vec3 b,Vec3 c,Vec3 d){triangle(a,b,c);triangle(a,c,d);};
+  if(preparation){
+    // Sample the visible preparation inside the traced outline in insertion coordinates.
+    InsertionSurface surface(*preparation,w,check);
+    constexpr double spacing=0.35;
+    constexpr size_t sampleLimit=250000;
+    std::vector<Vec3> rim;
+    double radius=0;
+    for(size_t i=0;i<outline.size();++i){
+      const auto a=outline[i], delta=subtract(outline[(i+1)%outline.size()],a);
+      const auto count=size_t(std::max(1.,std::ceil(length(planar(delta))/spacing)));
+      if(count>sampleLimit-rim.size())throw std::runtime_error("Preparation margin is too large to sample");
+      for(size_t j=0;j<count;++j)rim.push_back(j?add(a,multiply(delta,double(j)/count)):a);
+      radius=std::max(radius,length(planar(subtract(a,center))));
+    }
+    const size_t rings=size_t(std::max(2.,std::ceil(radius/spacing)));
+    if(rings>sampleLimit/rim.size())throw std::runtime_error("Preparation region is too large to sample");
+    const double roofZ=surface.project(roofCenter).z;
+    auto sample=[&](Vec3 point){
+      auto local=surface.project(point);
+      if(!surface.top(local.x,local.y,local.z,1e-8))throw std::runtime_error("The scan has a gap inside the margin");
+      if(local.z>=roofZ-1e-4)throw std::runtime_error("Increase the crown height to cover the preparation");
+      return surface.world(local);
+    };
+    auto roofPoint=[&](Vec3 p){return add(roofCenter,planar(subtract(p,center)));};
+    auto previous=rim;
+    for(size_t i=0;i<rim.size();++i){
+      const size_t j=(i+1)%rim.size();
+      quad(rim[i],rim[j],roofPoint(rim[j]),roofPoint(rim[i]));
+      triangle(roofPoint(rim[i]),roofPoint(rim[j]),roofCenter);
+    }
+    for(size_t layer=0;layer<rings;++layer){
+      if(check)check();
+      if(layer+1==rings){
+        const auto apex=sample(center);
+        for(size_t i=0;i<rim.size();++i)triangle(previous[(i+1)%rim.size()],previous[i],apex);
+        break;
+      }
+      std::vector<Vec3> inner;
+      inner.reserve(rim.size());
+      const double fraction=double(layer+1)/rings;
+      for(auto p:rim){
+        if(check&&inner.size()%512==0)check();
+        inner.push_back(sample(add(p,multiply(subtract(center,p),fraction))));
+      }
+      for(size_t i=0;i<rim.size();++i){
+        size_t j=(i+1)%rim.size();
+        quad(previous[j],previous[i],inner[i],inner[j]);
+      }
+      previous=std::move(inner);
+    }
+    if(!inspect(result,check).closed())throw std::runtime_error("Sampled crown did not form a closed mesh");
+    return result;
+  }
   for(size_t i=0;i<outline.size();++i){
     if(check&&i%1024==0)check();
     const auto a=outline[i], b=outline[(i+1)%outline.size()];

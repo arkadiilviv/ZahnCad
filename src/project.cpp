@@ -20,7 +20,7 @@ namespace zahn {
 namespace {
 constexpr qsizetype maxManifestBytes=64*1024*1024;
 void check(bool ok,const char* message) {if(!ok)throw std::runtime_error(message);}
-bool supportedVersion(int version) { return version>=1&&version<=6; }
+bool supportedVersion(int version) { return version>=1&&version<=7; }
 void validateReference(const ReferenceMeasurement& reference) {
   check(!reference.landmarks.trimmed().isEmpty()&&reference.landmarks.size()<=1024&&
         !reference.method.trimmed().isEmpty()&&reference.method.size()<=1024&&reference.notes.size()<=2048&&
@@ -100,6 +100,9 @@ std::vector<Vec3> decodeMargin(const QJsonValue& value) {
 void validateTeeth(const Scan& scan) {
   check(!scan.toothFdi||(validToothFdi(scan.toothFdi)&&scan.toothMargins.contains(scan.toothFdi)),
         "Invalid selected FDI tooth");
+  for(const auto& [tooth,axis]:scan.insertionAxes)
+    check(validToothFdi(tooth)&&scan.toothMargins.contains(tooth)&&
+          std::abs(std::hypot(axis.x,axis.y,axis.z)-1)<1e-6,"Invalid tooth insertion direction");
   for(const auto& [tooth,points]:scan.toothMargins)
     check(validToothFdi(tooth)||(tooth==0&&!points.empty()),"Invalid tooth margin assignment");
 }
@@ -207,10 +210,17 @@ void saveProject(const Project& p,const QString& path) {
         teeth.append(entry);
       }
       item["toothMargins"]=teeth;
-      version=6;
+      version=std::max(version,6);
     }else if(s.hasMargins()){
       item["marginMm"]=encodeMargin(s.toothMargins.begin()->second);
       version=std::max(version,3);
+    }
+    if(!s.insertionAxes.empty()){
+      QJsonArray axes;
+      for(const auto& [tooth,axis]:s.insertionAxes)
+        axes.append(QJsonArray{tooth,axis.x,axis.y,axis.z});
+      item["insertionAxes"]=axes;
+      version=7;
     }
     scans.append(item);
   }
@@ -283,6 +293,17 @@ Project loadProject(const QString& path,const Checkpoint& checkpoint) {
       s.toothMargins[s.toothFdi]=decodeMargin(o["marginMm"]);
     }else if(s.toothFdi){
       s.toothMargins.try_emplace(s.toothFdi);
+    }
+    if(version>=7&&o.contains("insertionAxes")){
+      const auto axes=o["insertionAxes"].toArray();
+      check(o["insertionAxes"].isArray()&&axes.size()<=32,"Invalid insertion directions");
+      for(const auto& entry:axes){
+        const auto a=entry.toArray();
+        check(a.size()==4&&a[1].isDouble()&&a[2].isDouble()&&a[3].isDouble(),"Invalid insertion direction");
+        const int tooth=a[0].toInt(-1);
+        check(s.insertionAxes.emplace(tooth,Vec3{a[1].toDouble(),a[2].toDouble(),a[3].toDouble()}).second,
+              "Duplicate tooth insertion direction");
+      }
     }
     validateTeeth(s);
     p.scans.push_back(std::move(s));
