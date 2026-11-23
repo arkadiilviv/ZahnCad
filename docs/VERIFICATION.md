@@ -249,3 +249,26 @@ surface region and a roof below the peak each caused generation to stop.
 All four Windows test suites passed. The packaged desktop generated and saved
 a tooth 16 candidate with the sampled-preparation cavity recorded in its
 project. Physical fit evaluation remains open.
+
+## M0–M3 Windows screenshots
+
+These captures are from the packaged Windows app. All four CTest suites and
+the packaged viewer, preparation, crown and recovery smoke tests passed.
+
+**M0. Upper-arch typodont import.** The public training-model scan is from
+[Luo Meng’s Dental Scan dataset](https://github.com/UMP-45/dental-scan-geometry/tree/757df2ab4c83b8093fe10e281bdf1bb0fab80e46)
+under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+
+![Upper arch typodont in the ZahnCAD Scan workspace](images/m0-typodont.png)
+
+**M1. Ruler on the synthetic 5 mm reference span.**
+
+![Surface ruler overlay on the synthetic triangle](images/m1-ruler.png)
+
+**M2. Saved preparation margin for tooth 16 on a synthetic scan.**
+
+![Guided Design workspace with the saved tooth 16 margin in amber](images/m2-margin.png)
+
+**M3. Freeform smoothing on the synthetic tooth 16 research crown.**
+
+![Research crown selected with the freeform smoothing tool active](images/m3-smoothing.png)
