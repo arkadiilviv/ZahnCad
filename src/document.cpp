@@ -16,7 +16,12 @@ public:
 void Document::reset(Project value, bool recovered) {
   history.clear(); project = std::move(value); recovered_ = recovered; history.setClean();
 }
+void Document::requireRoomForScan() const {
+  if(project.scans.size()>=Project::scanLimit)
+    throw std::runtime_error("This case has reached the scan limit. Remove a scan before adding another.");
+}
 void Document::addScan(Scan scan, QString label) {
+  requireRoomForScan();
   if(!scan.mesh) throw std::runtime_error("Scan geometry is missing");
   history.push(new Edit(label, [this,scan]{project.scans.push_back(scan);},
     [this]{project.scans.pop_back();}));

@@ -8,6 +8,7 @@ public:
   Project project;
   QUndoStack history;
   void reset(Project value = {}, bool recovered = false);
+  void requireRoomForScan() const;
   void addScan(Scan scan, QString label="Import scan");
   void removeScan(size_t index);
   void setDisplay(size_t index, bool visible, double opacity);

@@ -4,6 +4,82 @@
 #include <QFile>
 #include <QLockFile>
 #include <iostream>
+
+namespace {
+void checkScanLimit(const zahn::Scan& scan,const QTemporaryDir& dir) {
+  zahn::Document document;
+  for(size_t i=0;i<zahn::Project::scanLimit;++i)document.addScan(scan);
+  const auto historyIndex=document.history.index();
+  bool rejected=false;
+  try { document.addScan(scan); }
+  catch(const std::runtime_error&) { rejected=true; }
+  if(!rejected||document.history.index()!=historyIndex||
+     document.project.scans.size()!=zahn::Project::scanLimit)
+    throw std::runtime_error("Excess scan changed the case");
+  const auto path=dir.filePath("full.zahncad");
+  zahn::saveProject(document.project,path);
+  if(zahn::loadProject(path).scans.size()!=zahn::Project::scanLimit)
+    throw std::runtime_error("Full case did not reopen");
+  document.removeScan(0);
+  document.addScan(scan);
+}
+
+void checkToothRemoval(zahn::Scan scan,const QTemporaryDir& dir) {
+  scan.toothFdi=16;
+  scan.toothMargins[16]={{0,0,0},{1,0,0},{0,1,0}};
+  scan.toothMargins.try_emplace(17);
+  scan.insertionAxes={{16,{0,0,1}},{17,{1,0,0}}};
+  zahn::Document document;
+  document.addScan(scan);
+
+  scan.removeToothMarkup(16);
+  document.replaceScan(0,scan,"Remove tooth markup");
+  document.history.undo();
+  const auto& restored=document.project.scans.front();
+  if(restored.toothFdi!=16||restored.toothMargins.at(16).size()!=3||
+     !restored.insertionAxes.contains(16))
+    throw std::runtime_error("Undo did not restore tooth markup and its insertion axis");
+  document.history.redo();
+
+  const auto path=dir.filePath("removed-tooth.zahncad");
+  zahn::saveProject(document.project,path);
+  const auto reopened=zahn::loadProject(path);
+  const auto& remaining=reopened.scans.front();
+  if(remaining.toothFdi!=17||remaining.toothMargins.size()!=1||
+     remaining.insertionAxes.size()!=1||remaining.insertionAxes.at(17).x!=1)
+    throw std::runtime_error("Saved case did not preserve only the remaining tooth and axis");
+}
+
+void checkRecoveryRotation(zahn::Project project) {
+  QTemporaryDir dir;
+  const auto latest=dir.filePath("recovery.zahncad");
+  const auto previous=dir.filePath("recovery.previous.zahncad");
+  project.id="Previous";
+  zahn::saveRecovery(project,dir.path());
+  project.id="Latest";
+  zahn::saveRecovery(project,dir.path());
+
+  auto invalid=project;
+  invalid.scans.front().insertionAxes[16]={0,0,1};
+  bool rejected=false;
+  try { zahn::saveRecovery(invalid,dir.path()); }
+  catch(const std::runtime_error&) { rejected=true; }
+  if(!rejected||zahn::loadProject(latest).id!="Latest"||zahn::loadProject(previous).id!="Previous")
+    throw std::runtime_error("Failed autosave changed an existing snapshot");
+
+  // The writer produces a valid ZIP, but reopening its embedded scan fails.
+  auto unreadable=project;
+  unreadable.scans.front().original="Unparseable STL";
+  zahn::saveProject(unreadable,latest);
+  if(zahn::loadRecovery(dir.path()).id!="Previous")
+    throw std::runtime_error("Unreadable source did not trigger recovery fallback");
+  project.id="Replacement";
+  zahn::saveRecovery(project,dir.path());
+  if(zahn::loadProject(latest).id!="Replacement"||zahn::loadProject(previous).id!="Previous")
+    throw std::runtime_error("Unreadable project overwrote the readable backup");
+}
+}
+
 int main(int argc,char** argv){QCoreApplication app(argc,argv);try{
   QTemporaryDir dir;zahn::Project p;p.id="TEST-001";zahn::Scan s;s.name="Upper scan";s.role="Upper jaw";s.scale=2;
   s.original="solid test\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid test\n";p.scans.push_back(s);
@@ -11,6 +87,9 @@ int main(int argc,char** argv){QCoreApplication app(argc,argv);try{
   {QLockFile one(dir.filePath("session.lock")),two(dir.filePath("session.lock"));if(!one.tryLock()||two.tryLock())throw std::runtime_error("Session lock failed");}
   auto path=dir.filePath("case.zahncad");zahn::saveProject(p,path);auto loaded=zahn::loadProject(path);
   if(loaded.id!=p.id||loaded.scans.size()!=1||loaded.scans[0].original!=s.original||zahn::inspect(*loaded.scans[0].mesh).maximum.x!=2)throw std::runtime_error("Project roundtrip failed");
+  checkScanLimit(loaded.scans.front(),dir);
+  checkToothRemoval(loaded.scans.front(),dir);
+  checkRecoveryRotation(loaded);
   zahn::Document document;document.reset(loaded);auto geometry=document.project.scans[0].mesh;
   document.setDisplay(0,false,0.3);if(!document.dirty())throw std::runtime_error("Edit not dirty");
   document.history.undo();if(document.dirty()||!document.project.scans[0].visible)throw std::runtime_error("Undo did not restore clean state");

@@ -106,25 +106,6 @@ void validateTeeth(const Scan& scan) {
   for(const auto& [tooth,points]:scan.toothMargins)
     check(validToothFdi(tooth)||(tooth==0&&!points.empty()),"Invalid tooth margin assignment");
 }
-// Verify ZIP CRCs before rotating a recovery file. A damaged latest snapshot
-// must never overwrite the last readable previous snapshot.
-bool validRecoveryArchive(const QString& path) {
-  struct Reader {QFile file;char block[65536];explicit Reader(const QString& p):file(p){}} reader(path);
-  if(!reader.file.open(QIODevice::ReadOnly))return false;
-  std::unique_ptr<archive,decltype(&archive_read_free)> a(archive_read_new(),archive_read_free);
-  archive_read_support_format_zip(a.get());
-  auto read=[](archive*,void* data,const void** output)->la_ssize_t{auto& r=*static_cast<Reader*>(data);*output=r.block;return r.file.read(r.block,sizeof(r.block));};
-  if(archive_read_open(a.get(),&reader,nullptr,read,nullptr)!=ARCHIVE_OK)return false;
-  archive_entry* entry=nullptr;int status;size_t entries=0,total=0;QByteArray manifest;
-  while((status=archive_read_next_header(a.get(),&entry))==ARCHIVE_OK){
-    if(++entries>128)return false;bool isManifest=QString::fromUtf8(archive_entry_pathname(entry))=="manifest.json";
-    char block[65536];la_ssize_t n;
-    while((n=archive_read_data(a.get(),block,sizeof(block)))>0){total+=size_t(n);if(total>1024ull*1024*1024)return false;if(isManifest){if(manifest.size()+n>maxManifestBytes)return false;manifest.append(block,qsizetype(n));}}
-    if(n<0)return false;
-  }
-  auto document=QJsonDocument::fromJson(manifest);auto root=document.object();
-  return status==ARCHIVE_EOF&&root["format"]=="ZahnCAD"&&supportedVersion(root["version"].toInt(-1))&&root["scans"].isArray();
-}
 Mesh parse(const QByteArray& b, const QString& format,const Checkpoint& checkpoint) {QTemporaryFile f;check(f.open(),"Temporary surface failed");for(qsizetype offset=0;offset<b.size();offset+=1048576){if(checkpoint)checkpoint();auto n=std::min(qsizetype(1048576),b.size()-offset);check(f.write(b.constData()+offset,n)==n,"Temporary surface write failed");}check(f.flush(),"Temporary surface flush failed");return readSurface(nativePath(f.fileName()),format.toStdString(),checkpoint);}
 QByteArray encodeMesh(const Mesh& mesh){
   check(mesh.triangles.size()>0&&mesh.triangles.size()<=10000000,"Invalid current geometry");bool colored=!mesh.colors.empty();check(!colored||mesh.colors.size()==mesh.triangles.size(),"Invalid mesh colors");
@@ -153,14 +134,19 @@ void Scan::clearMargins() {
   toothMargins.erase(0);
   for(auto& entry:toothMargins)entry.second.clear();
 }
+void Scan::removeToothMarkup(int tooth) {
+  toothMargins.erase(tooth);
+  insertionAxes.erase(tooth);
+  if(toothFdi==tooth)toothFdi=toothMargins.empty()?0:toothMargins.begin()->first;
+}
 Scan importScan(const QString& path,const QString& role,double scale,const Checkpoint& checkpoint) {
   QFile file(path);check(file.open(QIODevice::ReadOnly),"Cannot open scan");check(file.size()<=500000084,"Scan exceeds import limit");
   Scan scan;scan.name=QFileInfo(file).fileName();scan.role=role;scan.scale=scale;scan.format=QFileInfo(file).suffix().toLower();check(scan.format=="stl"||scan.format=="ply"||scan.format=="obj","Supported scan formats: STL, PLY, OBJ");
   while(!file.atEnd()){if(checkpoint)checkpoint();auto chunk=file.read(1048576);check(!chunk.isEmpty(),"Cannot read scan");scan.original+=chunk;}
   scan.mesh=std::make_shared<const Mesh>(scaled(parse(scan.original,scan.format,checkpoint),scale,checkpoint));scan.sourceMesh=scan.mesh;return scan;
 }
-void saveProject(const Project& p,const QString& path) {
-  check(p.scans.size()<64,"Too many scans for this project format");
+static void writeProject(const Project& p,QSaveFile& file) {
+  check(p.scans.size()<=Project::scanLimit,"Too many scans for this project format");
   auto encodedSize=[](const std::shared_ptr<const Mesh>& mesh){
     check(bool(mesh),"Missing project geometry");
     return 14+mesh->triangles.size()*(mesh->colors.empty()?72ull:81ull);
@@ -175,7 +161,7 @@ void saveProject(const Project& p,const QString& path) {
     if(scan.sourceMesh&&scan.mesh!=scan.sourceMesh)total+=encodedSize(scan.mesh);
   }
   check(total<=1000ull*1024*1024,"Project exceeds safe expanded-size limit");
-  QSaveFile file(path);check(file.open(QIODevice::WriteOnly),"Cannot save project");
+  check(file.open(QIODevice::WriteOnly),"Cannot save project");
   std::unique_ptr<archive,decltype(&archive_write_free)> a(archive_write_new(),archive_write_free);
   check(archive_write_set_format_zip(a.get())==ARCHIVE_OK,"ZIP setup failed");
   auto writer=[](archive*,void* data,const void* b,size_t n)->la_ssize_t{return static_cast<QSaveFile*>(data)->write(static_cast<const char*>(b),qint64(n));};
@@ -233,7 +219,12 @@ void saveProject(const Project& p,const QString& path) {
   check(manifest.size()<=maxManifestBytes&&total+quint64(manifest.size())<=1024ull*1024*1024,
         "Project manifest or expanded size exceeds limit");
   add("manifest.json",manifest);
-  check(archive_write_close(a.get())==ARCHIVE_OK,"ZIP close failed");check(file.commit(),"Atomic project commit failed");
+  check(archive_write_close(a.get())==ARCHIVE_OK,"ZIP close failed");
+}
+void saveProject(const Project& p,const QString& path) {
+  QSaveFile file(path);
+  writeProject(p,file);
+  check(file.commit(),"Atomic project commit failed");
 }
 Project loadProject(const QString& path,const Checkpoint& checkpoint) {
   if(checkpoint)checkpoint();
@@ -310,10 +301,31 @@ Project loadProject(const QString& path,const Checkpoint& checkpoint) {
   }
   return p;
 }
+static void rotateReadableRecovery(const QString& current,const QString& previous) {
+  // Use the normal loader so a valid ZIP with unreadable project data cannot replace the backup.
+  try {
+    loadProject(current);
+  } catch(const std::runtime_error&) {
+    return;
+  }
+
+  QFile source(current);
+  check(source.open(QIODevice::ReadOnly),"Cannot read recovery backup");
+  QSaveFile backup(previous);
+  check(backup.open(QIODevice::WriteOnly),"Cannot create recovery backup");
+  while(!source.atEnd()){
+    const auto bytes=source.read(1048576);
+    check(!bytes.isEmpty()&&backup.write(bytes)==bytes.size(),"Recovery backup failed");
+  }
+  check(backup.commit(),"Recovery backup commit failed");
+}
 void saveRecovery(const Project& project,const QString& directory){
-  auto current=QDir(directory).filePath("recovery.zahncad");
-  if(validRecoveryArchive(current)) {QFile previous(current);check(previous.open(QIODevice::ReadOnly),"Cannot read recovery backup");QSaveFile backup(QDir(directory).filePath("recovery.previous.zahncad"));check(backup.open(QIODevice::WriteOnly),"Cannot create recovery backup");while(!previous.atEnd()){auto bytes=previous.read(1048576);check(!bytes.isEmpty()&&backup.write(bytes)==bytes.size(),"Recovery backup failed");}check(backup.commit(),"Recovery backup commit failed");}
-  saveProject(project,current);
+  const QDir dir(directory);
+  const auto current=dir.filePath("recovery.zahncad");
+  QSaveFile pending(current);
+  writeProject(project,pending);
+  rotateReadableRecovery(current,dir.filePath("recovery.previous.zahncad"));
+  check(pending.commit(),"Atomic recovery commit failed");
 }
 Project loadRecovery(const QString& directory,const Checkpoint& checkpoint){
   QString errors;

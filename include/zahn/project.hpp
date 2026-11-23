@@ -24,6 +24,7 @@ struct Scan {
   int toothFdi=0;
   bool hasMargins() const;
   void clearMargins();
+  void removeToothMarkup(int tooth);
 };
 struct ReferenceReading {
   QString scanName, scanRole, sourceSha256, appVersion, platform, capturedUtc;
@@ -37,6 +38,7 @@ struct ReferenceMeasurement {
   std::vector<ReferenceReading> readings;
 };
 struct Project {
+  static constexpr size_t scanLimit=63;
   QString id="Untitled case";
   std::vector<Scan> scans;
   std::optional<ReferenceMeasurement> reference;

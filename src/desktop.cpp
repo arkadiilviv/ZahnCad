@@ -1008,11 +1008,11 @@ class Window : public QMainWindow {
     layout->addWidget(buttons);
     if(dialog.exec()!=QDialog::Accepted)return;
     if(!remove){activateTooth(row,selected);return;}
-    if(!scan.toothMargins.at(selected).empty()&&QMessageBox::question(this,"Remove tooth markup",
-        QString("Remove tooth %1 and its saved margin from this scan?").arg(selected),
+    if((!scan.toothMargins.at(selected).empty()||scan.insertionAxes.contains(selected))&&
+       QMessageBox::question(this,"Remove tooth markup",
+        QString("Remove tooth %1 and its saved markup from this scan?").arg(selected),
         QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel)!=QMessageBox::Yes)return;
-    scan.toothMargins.erase(selected);
-    scan.toothFdi=scan.toothMargins.empty()?0:scan.toothMargins.begin()->first;
+    scan.removeToothMarkup(selected);
     document.replaceScan(size_t(row),std::move(scan),"Remove tooth markup");
     syncScene();
   }
@@ -1248,7 +1248,7 @@ class Window : public QMainWindow {
     const auto selected=before.toothMargins.find(before.toothFdi);
     if(!before.toothFdi||selected==before.toothMargins.end()||selected->second.size()<3)
       throw std::runtime_error("Select a tooth and apply its margin before building a research crown");
-    if(document.project.scans.size()>=63)throw std::runtime_error("Remove a scan before adding the crown (63-scan limit)");
+    document.requireRoomForScan();
     const auto axis=toothInsertionAxis(before);
     bool ok=true;
     const auto height=smokeHeight?*smokeHeight:QInputDialog::getDouble(this,"Build research crown",
@@ -1409,6 +1409,7 @@ class Window : public QMainWindow {
     });
   }
   void loadScan(QString file, QString role, double factor, std::function<void()> after = {}) {
+    document.requireRoomForScan();
     struct Result {zahn::Scan scan;zahn::DisplayMesh display;};auto result=std::make_shared<Result>();
     runJob("Loading scan",[result,file,role,factor](const zahn::Checkpoint& check){
       result->scan=zahn::importScan(file,role,factor,check);
