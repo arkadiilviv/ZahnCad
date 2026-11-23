@@ -20,7 +20,7 @@ namespace zahn {
 namespace {
 constexpr qsizetype maxManifestBytes=64*1024*1024;
 void check(bool ok,const char* message) {if(!ok)throw std::runtime_error(message);}
-bool supportedVersion(int version) { return version>=1&&version<=5; }
+bool supportedVersion(int version) { return version>=1&&version<=6; }
 void validateReference(const ReferenceMeasurement& reference) {
   check(!reference.landmarks.trimmed().isEmpty()&&reference.landmarks.size()<=1024&&
         !reference.method.trimmed().isEmpty()&&reference.method.size()<=1024&&reference.notes.size()<=2048&&
@@ -97,6 +97,12 @@ std::vector<Vec3> decodeMargin(const QJsonValue& value) {
   }
   return result;
 }
+void validateTeeth(const Scan& scan) {
+  check(!scan.toothFdi||(validToothFdi(scan.toothFdi)&&scan.toothMargins.contains(scan.toothFdi)),
+        "Invalid selected FDI tooth");
+  for(const auto& [tooth,points]:scan.toothMargins)
+    check(validToothFdi(tooth)||(tooth==0&&!points.empty()),"Invalid tooth margin assignment");
+}
 // Verify ZIP CRCs before rotating a recovery file. A damaged latest snapshot
 // must never overwrite the last readable previous snapshot.
 bool validRecoveryArchive(const QString& path) {
@@ -137,6 +143,13 @@ std::filesystem::path nativePath(const QString& value) {
   return std::filesystem::path(value.toUtf8().constData());
 #endif
 }
+bool Scan::hasMargins() const {
+  return std::any_of(toothMargins.begin(),toothMargins.end(),[](const auto& entry){return !entry.second.empty();});
+}
+void Scan::clearMargins() {
+  toothMargins.erase(0);
+  for(auto& entry:toothMargins)entry.second.clear();
+}
 Scan importScan(const QString& path,const QString& role,double scale,const Checkpoint& checkpoint) {
   QFile file(path);check(file.open(QIODevice::ReadOnly),"Cannot open scan");check(file.size()<=500000084,"Scan exceeds import limit");
   Scan scan;scan.name=QFileInfo(file).fileName();scan.role=role;scan.scale=scale;scan.format=QFileInfo(file).suffix().toLower();check(scan.format=="stl"||scan.format=="ply"||scan.format=="obj","Supported scan formats: STL, PLY, OBJ");
@@ -174,28 +187,37 @@ void saveProject(const Project& p,const QString& path) {
       {"scaleToMm",s.scale},{"visible",s.visible},{"opacity",s.opacity},{"operations",s.operations}};
     if(s.format=="zmesh"){
       add(entry,encodeMesh(*s.sourceMesh));
-      version=4;
+      version=std::max(version,4);
     }else add(entry,s.original);
     if(s.sourceMesh&&s.mesh!=s.sourceMesh){
       QString current=QString("meshes/%1.zmesh").arg(i);
       add(current,encodeMesh(*s.mesh));
       item["current"]=current;
     }
-    if(!s.margin.empty()){
-      item["marginMm"]=encodeMargin(s.margin);
-      version=std::max(version,3);
-    }
+    validateTeeth(s);
     if(s.toothFdi){
-      check(validToothFdi(s.toothFdi),"Invalid FDI tooth number");
       item["toothFdi"]=s.toothFdi;
-      version=4;
+      version=std::max(version,4);
+    }
+    if(s.toothMargins.size()>1||(s.toothMargins.size()==1&&!s.toothMargins.contains(s.toothFdi))){
+      QJsonArray teeth;
+      for(const auto& [tooth,points]:s.toothMargins){
+        QJsonObject entry{{"toothFdi",tooth}};
+        if(!points.empty())entry["marginMm"]=encodeMargin(points);
+        teeth.append(entry);
+      }
+      item["toothMargins"]=teeth;
+      version=6;
+    }else if(s.hasMargins()){
+      item["marginMm"]=encodeMargin(s.toothMargins.begin()->second);
+      version=std::max(version,3);
     }
     scans.append(item);
   }
   QJsonObject root{{"format","ZahnCAD"},{"version",version},{"caseId",p.id},{"units","mm"},{"scans",scans}};
   if(p.reference){
     root["referenceMeasurement"]=encodeReference(*p.reference);
-    root["version"]=5;
+    root["version"]=std::max(version,5);
   }
   const auto manifest=QJsonDocument(root).toJson(QJsonDocument::Compact);
   check(manifest.size()<=maxManifestBytes&&total+quint64(manifest.size())<=1024ull*1024*1024,
@@ -243,11 +265,26 @@ Project loadProject(const QString& path,const Checkpoint& checkpoint) {
       check(current!=entries.end(),"Missing current geometry");
       s.mesh=std::make_shared<const Mesh>(decodeMesh(current->second,checkpoint));
     }
-    if(version>=3&&o.contains("marginMm"))s.margin=decodeMargin(o["marginMm"]);
     if(version>=4&&o.contains("toothFdi")){
-      s.toothFdi=o["toothFdi"].toInt();
+      s.toothFdi=o["toothFdi"].toInt(-1);
       check(validToothFdi(s.toothFdi),"Invalid FDI tooth number");
     }
+    if(version>=6&&o.contains("toothMargins")){
+      const auto teeth=o["toothMargins"].toArray();
+      check(o["toothMargins"].isArray()&&!o.contains("marginMm")&&teeth.size()<=33,"Invalid tooth margins");
+      for(const auto& value:teeth){
+        const auto entry=value.toObject();
+        const int tooth=entry["toothFdi"].toInt(-1);
+        check((tooth==0||validToothFdi(tooth))&&!s.toothMargins.contains(tooth),"Invalid or duplicate tooth margin");
+        auto& points=s.toothMargins[tooth];
+        if(entry.contains("marginMm"))points=decodeMargin(entry["marginMm"]);
+      }
+    }else if(version>=3&&o.contains("marginMm")){
+      s.toothMargins[s.toothFdi]=decodeMargin(o["marginMm"]);
+    }else if(s.toothFdi){
+      s.toothMargins.try_emplace(s.toothFdi);
+    }
+    validateTeeth(s);
     p.scans.push_back(std::move(s));
   }
   return p;

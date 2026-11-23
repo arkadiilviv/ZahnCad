@@ -47,6 +47,7 @@
 #include <QDoubleSpinBox>
 #include <QLineEdit>
 #include <QAction>
+#include <QUndoCommand>
 #include <QVariant>
 #include <QSignalBlocker>
 #include <QSqlDatabase>
@@ -144,6 +145,7 @@ static void styleWorkbench(QApplication& app) {
       border-color: #A1F3E9; color: #E5EBF0;
     }
     QPushButton[stage="true"]:checked QLabel[muted="true"] { color: #D2EFEB; }
+    QPushButton[tooth="true"][marked="true"] { border-color: #38C9B8; }
     QPushButton[tooth="true"]:checked { background: #185D57; border: 1px solid #38C9B8; }
     QPushButton[tooth="true"]:disabled { color: #778491; background: #1C232B; }
     QListWidget {
@@ -167,13 +169,62 @@ static void styleWorkbench(QApplication& app) {
   )");
 }
 
-class BrushOverlay : public QWidget {
+static const QColor brushHighlight("#38C9B8");
+static const QColor marginHighlight("#FFC04D");
+
+class ViewportOverlay : public QWidget {
+  QColor border;
 public:
-  QPointF center;double radius=30;bool active=false,inside=false,erase=false;
-  explicit BrushOverlay(QWidget* parent):QWidget(parent){setAttribute(Qt::WA_TransparentForMouseEvents);setAttribute(Qt::WA_TranslucentBackground);}
+  QPointF center;
+  double radius=30;
+  bool brushActive=false,inside=false,erase=false;
+  explicit ViewportOverlay(QWidget* parent):QWidget(parent){
+    setAttribute(Qt::WA_TransparentForMouseEvents);
+    setAttribute(Qt::WA_TranslucentBackground);
+  }
+  void setBorderColor(const QColor& color) {
+    if(border==color)return;
+    border=color;
+    update();
+  }
 protected:
-  void paintEvent(QPaintEvent*) override {if(!active||!inside)return;QPainter painter(this);painter.setRenderHint(QPainter::Antialiasing);QColor color=erase?QColor(255,140,30):QColor("#38C9B8");painter.setPen(QPen(color,2));color.setAlpha(28);painter.setBrush(color);painter.drawEllipse(center,radius,radius);}
+  void paintEvent(QPaintEvent*) override {
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing);
+    if(border.isValid()){
+      painter.setPen(QPen(border,4));
+      painter.drawRoundedRect(QRectF(rect()).adjusted(2,2,-2,-2),4,4);
+    }
+    if(brushActive&&inside){
+      auto color=erase?QColor(255,140,30):brushHighlight;
+      painter.setPen(QPen(color,2));
+      color.setAlpha(28);
+      painter.setBrush(color);
+      painter.drawEllipse(center,radius,radius);
+    }
+  }
 };
+
+class MarginPointEdit final : public QUndoCommand {
+  std::vector<zahn::Vec3>& points;
+  size_t index;
+  std::optional<zahn::Vec3> before, after;
+
+  void apply(const std::optional<zahn::Vec3>& oldPoint,
+             const std::optional<zahn::Vec3>& newPoint) {
+    auto position=points.begin()+index;
+    if(oldPoint&&newPoint)*position=*newPoint;
+    else if(newPoint)points.insert(position,*newPoint);
+    else points.erase(position);
+  }
+public:
+  MarginPointEdit(std::vector<zahn::Vec3>& points, size_t index,
+                  std::optional<zahn::Vec3> before, std::optional<zahn::Vec3> after)
+      : points(points), index(index), before(before), after(after) {}
+  void undo() override {apply(after,before);}
+  void redo() override {apply(before,after);}
+};
+
 class Window : public QMainWindow {
   zahn::Document document;
   QString path, directory;
@@ -202,22 +253,26 @@ class Window : public QMainWindow {
   vtkNew<vtkActor> selectionActor;
   vtkNew<vtkActor> normalsActor;
   vtkNew<vtkActor> traceActor;
+  vtkNew<vtkActor> otherMarginsActor;
   vtkNew<vtkActor> undercutActor;
   std::shared_ptr<const zahn::Mesh> analyzedMesh;
   enum class PointTool { None, Margin, MovingLandmarks, FixedLandmarks };
   PointTool pointTool=PointTool::None;
   int toolHistoryIndex=0;
-  int movingRow=-1, fixedRow=-1;
+  int movingRow=-1, fixedRow=-1, draftTooth=0;
   std::vector<zahn::Vec3> draft, movingLandmarks;
+  QUndoStack marginHistory;
+  bool editingSavedMargin=false;
   const zahn::Mesh* selectionMesh=nullptr;
   using VertexKey=std::array<double,3>;
   std::set<VertexKey> selectedVertices;
   bool picking=false,showNormals=false,showColors=true;
   vtkNew<zahn::InteractionStyle> inputStyle;
-  BrushOverlay* brushOverlay=nullptr;
+  ViewportOverlay* viewportOverlay=nullptr;
   QSpinBox* brushRadius=nullptr;
   QAction* brushAction=nullptr;
   QAction *navigationAction, *boxAction, *measureAction, *clipAction;
+  QAction *removeDraftPointAction, *applyMarginAction;
   std::vector<float> strokeDepth;
   int depthWidth=0,depthHeight=0;
   struct Display {
@@ -255,8 +310,23 @@ class Window : public QMainWindow {
   }
   void refreshTitle() {
     setWindowTitle(document.project.id + (document.dirty() ? " *" : "") + " — ZahnCAD Research");
-    undoAction->setEnabled(!busy && document.history.canUndo());
-    redoAction->setEnabled(!busy && document.history.canRedo());
+    refreshUndoActions();
+  }
+  QUndoStack& activeHistory() {
+    return pointTool==PointTool::Margin?marginHistory:document.history;
+  }
+  void refreshUndoActions() {
+    auto& history=activeHistory();
+    undoAction->setEnabled(!busy&&history.canUndo());
+    redoAction->setEnabled(!busy&&history.canRedo());
+  }
+  void stepHistory(bool redo) {
+    auto& history=activeHistory();
+    if(redo)history.redo();else history.undo();
+    if(pointTool==PointTool::Margin){
+      updateTrace();
+      render->Render();
+    }
   }
   // The worker owns its result; only the finished callback touches widgets or the scene.
   void runJob(QString label, std::function<void(const zahn::Checkpoint&)> worker,
@@ -372,10 +442,13 @@ class Window : public QMainWindow {
         auto* row=new QListWidgetItem(tooth+scan.role+"  ·  "+scan.name,scans);
         row->setToolTip(row->text());
         row->setCheckState(scan.visible?Qt::Checked:Qt::Unchecked);
-        if(!scan.margin.empty()){
-          auto* margin=new QListWidgetItem(tooth+scan.role+" margin  ·  "+scan.name,margins);
+        for(const auto& [number,points]:scan.toothMargins){
+          if(points.empty())continue;
+          const auto label=number?QString("Tooth %1").arg(number):QString("Unassigned");
+          auto* margin=new QListWidgetItem(label+"  ·  "+scan.role+" margin  ·  "+scan.name,margins);
           margin->setToolTip(margin->text());
           margin->setData(Qt::UserRole,scans->count()-1);
+          margin->setData(Qt::UserRole+1,number);
         }
       }
       if(scans->count())scans->setCurrentRow(std::clamp(selected,0,scans->count()-1));
@@ -608,8 +681,13 @@ class Window : public QMainWindow {
     boxAction->setChecked(hasBox);
     measureAction->setChecked(measuring);
     clipAction->setChecked(clip);
+    const bool tracing=pointTool==PointTool::Margin;
+    viewportOverlay->setBorderColor(tracing?marginHighlight:picking?brushHighlight:QColor{});
+    removeDraftPointAction->setEnabled(tracing&&!draft.empty());
+    applyMarginAction->setEnabled(tracing&&draft.size()>=3);
+    refreshUndoActions();
     QString name="Navigate";
-    if(pointTool==PointTool::Margin)name="Margin trace";
+    if(pointTool==PointTool::Margin)name=draftTooth?QString("Margin trace · Tooth %1").arg(draftTooth):QString("Margin trace");
     else if(pointTool!=PointTool::None)name="Landmark registration";
     else if(picking)name="Vertex brush";
     else if(hasBox)name="Crop / selection box";
@@ -626,7 +704,9 @@ class Window : public QMainWindow {
     picking=enabled;inputStyle->setBrush(enabled);strokeDepth.clear();
     if(brushRadius)inputStyle->radius=brushRadius->value()*view->devicePixelRatioF();
     if(brushAction)brushAction->setChecked(enabled);
-    if(brushOverlay){brushOverlay->active=enabled;brushOverlay->update();}
+    viewportOverlay->brushActive=enabled;
+    if(!enabled)viewportOverlay->inside=false;
+    viewportOverlay->update();
     if(enabled){boxWidget->Off();setMeasuring(false);}
     refreshToolUi();
   }
@@ -666,35 +746,24 @@ class Window : public QMainWindow {
   int captureRow() const {
     return pointTool==PointTool::FixedLandmarks?fixedRow:movingRow;
   }
-  void updateTrace() {
-    refreshToolUi();
-    traceActor->VisibilityOff();
-    const int row=pointTool==PointTool::None?scans->currentRow():captureRow();
-    if(row<0||size_t(row)>=document.project.scans.size())return;
-    const auto& scan=document.project.scans[row];
-    if(pointTool==PointTool::MovingLandmarks||pointTool==PointTool::FixedLandmarks){
-      for(size_t i=0;i<document.project.scans.size();++i){
-        const auto& item=document.project.scans[i];
-        auto& actor=cache.at(item.mesh.get()).actor;
-        actor->SetVisibility(int(i)==row);
-        if(int(i)==row)actor->GetProperty()->SetOpacity(1);
-      }
-    }else if(!scan.visible||scan.opacity<=0)return;
-    const auto& points=pointTool==PointTool::None?scan.margin:draft;
-    if(points.empty())return;
+  void drawTraces(vtkActor* actor,const std::vector<const std::vector<zahn::Vec3>*>& traces,bool closed) {
     vtkNew<vtkPoints> coordinates;
     coordinates->SetDataTypeToDouble();
     vtkNew<vtkCellArray> markers,strip;
-    for(const auto& p:points){
-      const auto id=coordinates->InsertNextPoint(p.x,p.y,p.z);
-      markers->InsertNextCell(1,&id);
+    for(const auto* points:traces){
+      const auto start=coordinates->GetNumberOfPoints();
+      for(const auto& p:*points){
+        const auto id=coordinates->InsertNextPoint(p.x,p.y,p.z);
+        markers->InsertNextCell(1,&id);
+      }
+      if(points->size()>1){
+        const bool loop=closed&&points->size()>=3;
+        strip->InsertNextCell(int(points->size())+int(loop));
+        for(vtkIdType i=0;i<vtkIdType(points->size());++i)strip->InsertCellPoint(start+i);
+        if(loop)strip->InsertCellPoint(start);
+      }
     }
-    if(points.size()>1){
-      const bool closed=points.size()>=3&&(pointTool==PointTool::None||pointTool==PointTool::Margin);
-      strip->InsertNextCell(int(points.size())+int(closed));
-      for(vtkIdType i=0;i<vtkIdType(points.size());++i)strip->InsertCellPoint(i);
-      if(closed)strip->InsertCellPoint(0);
-    }
+    if(!coordinates->GetNumberOfPoints())return;
     vtkNew<vtkPolyData> data;
     data->SetPoints(coordinates);
     data->SetVerts(markers);
@@ -705,12 +774,49 @@ class Window : public QMainWindow {
     mapper->SetRelativeCoincidentTopologyLineOffsetParameters(-2,-2);
     mapper->SetRelativeCoincidentTopologyPointOffsetParameter(-2);
     if(clip)mapper->AddClippingPlane(plane);
-    traceActor->SetMapper(mapper);
-    traceActor->VisibilityOn();
+    actor->SetMapper(mapper);
+    actor->VisibilityOn();
+  }
+  void updateTrace() {
+    refreshToolUi();
+    traceActor->VisibilityOff();
+    otherMarginsActor->VisibilityOff();
+    const int row=pointTool==PointTool::None?scans->currentRow():captureRow();
+    if(row<0||size_t(row)>=document.project.scans.size())return;
+    const auto& scan=document.project.scans[row];
+    if(pointTool==PointTool::MovingLandmarks||pointTool==PointTool::FixedLandmarks){
+      for(size_t i=0;i<document.project.scans.size();++i){
+        const auto& item=document.project.scans[i];
+        auto& actor=cache.at(item.mesh.get()).actor;
+        actor->SetVisibility(int(i)==row);
+        if(int(i)==row)actor->GetProperty()->SetOpacity(1);
+      }
+      drawTraces(traceActor,{&draft},false);
+      return;
+    }
+    const int tooth=pointTool==PointTool::Margin?draftTooth:scan.toothFdi;
+    int activeMargin=-1;
+    for(int i=0;i<margins->count();++i){
+      const auto* item=margins->item(i);
+      if(item->data(Qt::UserRole).toInt()==row&&item->data(Qt::UserRole+1).toInt()==tooth){activeMargin=i;break;}
+    }
+    margins->setCurrentRow(activeMargin);
+    if(!scan.visible||scan.opacity<=0)return;
+    std::vector<const std::vector<zahn::Vec3>*> others;
+    if(pointTool==PointTool::Margin)drawTraces(traceActor,{&draft},true);
+    for(const auto& [number,points]:scan.toothMargins){
+      if(points.empty())continue;
+      if(number!=tooth)others.push_back(&points);
+      else if(pointTool==PointTool::None)drawTraces(traceActor,{&points},true);
+    }
+    drawTraces(otherMarginsActor,others,true);
   }
   void clearPointTool() {
     pointTool=PointTool::None;
     movingRow=fixedRow=-1;
+    draftTooth=0;
+    marginHistory.clear();
+    editingSavedMargin=false;
     draft.clear();
     movingLandmarks.clear();
   }
@@ -718,6 +824,7 @@ class Window : public QMainWindow {
     if(pointTool==PointTool::None)return;
     clearPointTool();
     syncScene();
+    statusBar()->clearMessage();
   }
   void focusCapture() {
     scans->setCurrentRow(captureRow());
@@ -730,7 +837,7 @@ class Window : public QMainWindow {
   }
   void startMargin() {
     const int row=scans->currentRow();
-    if(row<0)return;
+    if(row<0||pointTool==PointTool::Margin)return;
     cancelPointTool();
     const auto& scan=document.project.scans[row];
     if(!scan.visible||scan.opacity<=0)throw std::runtime_error("Show the selected scan before tracing its margin");
@@ -738,12 +845,16 @@ class Window : public QMainWindow {
     setMeasuring(false);
     boxWidget->Off();
     movingRow=row;
-    draft=scan.margin;
+    draftTooth=scan.toothFdi;
+    if(const auto saved=scan.toothMargins.find(draftTooth);saved!=scan.toothMargins.end())draft=saved->second;
+    editingSavedMargin=draft.size()>=3;
     toolHistoryIndex=document.history.index();
     pointTool=PointTool::Margin;
     updateTrace();
     render->Render();
-    statusBar()->showMessage("Click to add points, Shift+click to move the nearest point. Use Apply margin to save.");
+    statusBar()->showMessage(editingSavedMargin?
+      "Click a margin segment to insert a point. Shift+click moves a point. Apply margin saves edits.":
+      "Click the scan to add points in order. Shift+click moves a point. Apply margin saves the trace.");
   }
   void applyMargin(bool clear=false) {
     const int row=pointTool==PointTool::Margin?captureRow():scans->currentRow();
@@ -751,9 +862,32 @@ class Window : public QMainWindow {
     if(!clear&&(pointTool!=PointTool::Margin||draft.size()<3))
       throw std::runtime_error("Trace at least three surface points first");
     auto scan=document.project.scans[row];
-    scan.margin=clear?std::vector<zahn::Vec3>{}:std::move(draft);
+    const int tooth=pointTool==PointTool::Margin?draftTooth:scan.toothFdi;
+    if(clear){
+      const auto saved=scan.toothMargins.find(tooth);
+      if(saved!=scan.toothMargins.end()){
+        if(tooth)saved->second.clear();
+        else scan.toothMargins.erase(saved);
+      }else if(pointTool!=PointTool::Margin)return;
+    }else scan.toothMargins[tooth]=std::move(draft);
     cancelPointTool();
     document.replaceScan(size_t(row),std::move(scan),clear?"Clear margin":"Apply margin");
+    syncScene();
+    statusBar()->showMessage(clear?"Saved margin cleared":"Margin applied to the case",4000);
+  }
+  void activateTooth(int row,int tooth) {
+    auto scan=document.project.scans.at(size_t(row));
+    if(scan.toothFdi==tooth)return;
+    if(tooth&&!scan.toothMargins.contains(tooth)){
+      // The original workflow allowed tracing before assigning the first tooth.
+      if(scan.toothMargins.size()==1&&scan.toothMargins.contains(0)){
+        auto unassigned=scan.toothMargins.extract(0);
+        unassigned.key()=tooth;
+        scan.toothMargins.insert(std::move(unassigned));
+      }else scan.toothMargins.try_emplace(tooth);
+    }
+    scan.toothFdi=tooth;
+    document.replaceScan(size_t(row),std::move(scan),"Select tooth markup");
     syncScene();
   }
   void selectTooth() {
@@ -768,18 +902,23 @@ class Window : public QMainWindow {
     dialog.setWindowTitle("Select tooth markup");
     auto* layout=new QVBoxLayout(&dialog);
     layout->addWidget(new QLabel("Permanent teeth (FDI) · patient right to left"));
+    layout->addWidget(new QLabel("Choose a tooth to add or switch to it. Outlined teeth already have markup."));
     auto* chart=new QGridLayout;
     layout->addLayout(chart);
     chart->addWidget(new QLabel("Upper"),0,0);
     chart->addWidget(new QLabel("Lower"),1,0);
     int selected=scan.toothFdi;
+    bool remove=false;
     for(int arch=0;arch<2;++arch){
       for(int position=0;position<16;++position){
         const int tooth=position<8?(arch==0?18:48)-position:(arch==0?21:31)+position-8;
         auto* button=new QPushButton(QString::number(tooth));
         button->setProperty("tooth",true);
+        button->setProperty("marked",scan.toothMargins.contains(tooth));
         button->setObjectName(QString("tooth-%1").arg(tooth));
         button->setAccessibleName(QString("Select tooth %1").arg(tooth));
+        const auto saved=scan.toothMargins.find(tooth);
+        if(saved!=scan.toothMargins.end())button->setToolTip(saved->second.empty()?"Tooth added":"Saved margin");
         button->setMinimumWidth(38);
         button->setCheckable(true);
         button->setChecked(tooth==selected);
@@ -791,14 +930,19 @@ class Window : public QMainWindow {
     }
     chart->setColumnMinimumWidth(9,14);
     auto* buttons=new QDialogButtonBox(QDialogButtonBox::Cancel);
-    auto* clear=buttons->addButton("Clear tooth",QDialogButtonBox::ResetRole);
+    auto* clear=buttons->addButton("Remove selected tooth…",QDialogButtonBox::ResetRole);
     clear->setEnabled(selected!=0);
-    connect(clear,&QPushButton::clicked,&dialog,[&dialog,&selected]{selected=0;dialog.accept();});
+    connect(clear,&QPushButton::clicked,&dialog,[&dialog,&remove]{remove=true;dialog.accept();});
     connect(buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);
     layout->addWidget(buttons);
-    if(dialog.exec()!=QDialog::Accepted||selected==scan.toothFdi)return;
-    scan.toothFdi=selected;
-    document.replaceScan(size_t(row),std::move(scan),selected?"Set tooth markup":"Clear tooth markup");
+    if(dialog.exec()!=QDialog::Accepted)return;
+    if(!remove){activateTooth(row,selected);return;}
+    if(!scan.toothMargins.at(selected).empty()&&QMessageBox::question(this,"Remove tooth markup",
+        QString("Remove tooth %1 and its saved margin from this scan?").arg(selected),
+        QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel)!=QMessageBox::Yes)return;
+    scan.toothMargins.erase(selected);
+    scan.toothFdi=scan.toothMargins.empty()?0:scan.toothMargins.begin()->first;
+    document.replaceScan(size_t(row),std::move(scan),"Remove tooth markup");
     syncScene();
   }
   QString scanLabel(int row) const {
@@ -837,6 +981,62 @@ class Window : public QMainWindow {
     pointTool=PointTool::MovingLandmarks;
     focusCapture();
   }
+  void editMarginPoint(zahn::Vec3 point,int x,int y) {
+    const QPointF click(x,y);
+    const double scale=view->devicePixelRatioF();
+    auto project=[this](zahn::Vec3 p){
+      renderer->SetWorldPoint(p.x,p.y,p.z,1);
+      renderer->WorldToDisplay();
+      const auto* display=renderer->GetDisplayPoint();
+      return QPointF(display[0],display[1]);
+    };
+    if(render->GetInteractor()->GetShiftKey()&&!draft.empty()){
+      auto nearest=draft.size();
+      double best=24*scale;
+      for(size_t i=0;i<draft.size();++i){
+        const auto delta=project(draft[i])-click;
+        const double distance=std::hypot(delta.x(),delta.y());
+        if(distance<=best){best=distance;nearest=i;}
+      }
+      if(nearest==draft.size()){
+        statusBar()->showMessage("Shift+click within 24 pixels of a margin point",4000);
+        return;
+      }
+      marginHistory.push(new MarginPointEdit(draft,nearest,draft[nearest],point));
+      return;
+    }
+
+    if(draft.size()>=10000)throw std::runtime_error("Margin point limit reached");
+    size_t insertion=draft.size();
+    if(editingSavedMargin&&draft.size()>=3){
+      // Screen-space proximity chooses the segment. The inserted point comes from the scan pick.
+      double best=12*scale;
+      bool found=false;
+      auto start=project(draft.back());
+      for(size_t i=0;i<draft.size();++i){
+        const auto end=project(draft[i]);
+        const auto offset=click-end;
+        if(std::hypot(offset.x(),offset.y())<=4*scale){
+          statusBar()->showMessage("Shift+click to move an existing point",4000);
+          return;
+        }
+        const auto edge=end-start;
+        const double lengthSquared=QPointF::dotProduct(edge,edge);
+        if(lengthSquared>0){
+          const double t=std::clamp(QPointF::dotProduct(click-start,edge)/lengthSquared,0.,1.);
+          const auto delta=click-(start+t*edge);
+          const double distance=std::hypot(delta.x(),delta.y());
+          if(distance<best){best=distance;insertion=i==0?draft.size():i;found=true;}
+        }
+        start=end;
+      }
+      if(!found){
+        statusBar()->showMessage("Click near a margin segment to insert a point",4000);
+        return;
+      }
+    }
+    marginHistory.push(new MarginPointEdit(draft,insertion,std::nullopt,point));
+  }
   void pickToolPoint(int x,int y) {
     if(busy)return;
     if(document.history.index()!=toolHistoryIndex){cancelPointTool();return;}
@@ -853,24 +1053,8 @@ class Window : public QMainWindow {
     }
     const auto* p=picker->GetPickPosition();
     const zahn::Vec3 point{p[0],p[1],p[2]};
-    if(pointTool==PointTool::Margin&&render->GetInteractor()->GetShiftKey()&&!draft.empty()){
-      auto pixels=[&](zahn::Vec3 candidate){
-        renderer->SetWorldPoint(candidate.x,candidate.y,candidate.z,1);
-        renderer->WorldToDisplay();
-        const auto* q=renderer->GetDisplayPoint();
-        return std::hypot(q[0]-x,q[1]-y);
-      };
-      auto nearest=std::min_element(draft.begin(),draft.end(),
-        [&pixels](auto a,auto b){return pixels(a)<pixels(b);});
-      if(pixels(*nearest)>24*view->devicePixelRatioF()){
-        statusBar()->showMessage("Shift+click within 24 pixels of a margin point",4000);
-        return;
-      }
-      *nearest=point;
-    }else{
-      if(draft.size()>=10000)throw std::runtime_error("Margin point limit reached");
-      draft.push_back(point);
-    }
+    if(pointTool==PointTool::Margin)editMarginPoint(point,x,y);
+    else draft.push_back(point);
     if(pointTool==PointTool::MovingLandmarks&&draft.size()==3){
       movingLandmarks=std::move(draft);
       draft.clear();
@@ -893,11 +1077,12 @@ class Window : public QMainWindow {
     preview->SetMapper(mapper);
     preview->GetProperty()->SetColor(0.5,0.9,0.65);
     const auto traceVisible=traceActor->GetVisibility();
+    const auto otherMarginsVisible=otherMarginsActor->GetVisibility();
     const auto undercutVisible=undercutActor->GetVisibility();
     if(!keepSource)old.actor->VisibilityOff();
     selectionActor->VisibilityOff();
     normalsActor->VisibilityOff();
-    if(!keepSource)traceActor->VisibilityOff();
+    if(!keepSource){traceActor->VisibilityOff();otherMarginsActor->VisibilityOff();}
     undercutActor->VisibilityOff();
     renderer->AddActor(preview);
     if(keepSource)renderer->ResetCameraClippingRange();
@@ -909,6 +1094,7 @@ class Window : public QMainWindow {
     selectionActor->VisibilityOn();
     normalsActor->VisibilityOn();
     traceActor->SetVisibility(traceVisible);
+    otherMarginsActor->SetVisibility(otherMarginsVisible);
     undercutActor->SetVisibility(undercutVisible);
     if(keepSource)renderer->ResetCameraClippingRange();
     render->Render();
@@ -945,7 +1131,8 @@ class Window : public QMainWindow {
       if(!approveGeometry(before,*display,label,report))return;
       auto edited=before;
       edited.mesh=display->source;
-      for(auto& point:edited.margin)point=fit.apply(point);
+      for(auto& entry:edited.toothMargins)
+        for(auto& point:entry.second)point=fit.apply(point);
       QJsonArray matrix;
       for(double value:fit.matrix)matrix.append(value);
       commitGeometry(row,std::move(edited),std::move(*display),label,
@@ -964,7 +1151,8 @@ class Window : public QMainWindow {
     const auto before=document.project.scans.at(size_t(row));
     if(!before.visible||before.opacity<=0||before.role=="Restoration candidate")
       throw std::runtime_error("Select a visible preparation scan");
-    if(!before.toothFdi||before.margin.size()<3)
+    const auto selected=before.toothMargins.find(before.toothFdi);
+    if(!before.toothFdi||selected==before.toothMargins.end()||selected->second.size()<3)
       throw std::runtime_error("Select a tooth and apply its margin before building a research crown");
     if(document.project.scans.size()>=63)throw std::runtime_error("Remove a scan before adding the crown (63-scan limit)");
     const auto axis=insertionAxis();
@@ -973,7 +1161,7 @@ class Window : public QMainWindow {
       "Height above the highest margin point (mm)\nThe current view sets the insertion direction.",5,2,12,2,&ok);
     if(!ok)return;
     auto display=std::make_shared<zahn::DisplayMesh>();
-    runJob("Building research crown",[margin=before.margin,axis,height,display](const zahn::Checkpoint& check){
+    runJob("Building research crown",[margin=selected->second,axis,height,display](const zahn::Checkpoint& check){
       auto mesh=std::make_shared<const zahn::Mesh>(zahn::researchCrown(margin,axis,height,check));
       *display=zahn::prepareDisplay(std::move(mesh),check);
     },[this,before,axis,height,display,after]{
@@ -985,6 +1173,7 @@ class Window : public QMainWindow {
       crown.role="Restoration candidate";
       crown.format="zmesh";
       crown.toothFdi=before.toothFdi;
+      crown.toothMargins.try_emplace(crown.toothFdi);
       crown.sourceMesh=crown.mesh=display->source;
       crown.operations.append(QJsonObject{{"operation","Build research crown"},{"preparationScan",before.name},
         {"axis",QJsonArray{axis.x,axis.y,axis.z}},{"heightMm",height},
@@ -1041,7 +1230,7 @@ class Window : public QMainWindow {
   void analyzeCurrentInsertion() {
     const int row=scans->currentRow();
     if(row<0)return;
-    cancelPointTool();
+    if(pointTool!=PointTool::None)throw std::runtime_error("Apply or cancel the active point tool before checking undercuts");
     const auto mesh=document.project.scans[row].mesh;
     const auto axis=insertionAxis();
     struct Result { zahn::InsertionReport report; vtkSmartPointer<vtkPolyData> overlay; };
@@ -1091,11 +1280,11 @@ class Window : public QMainWindow {
       const QString label="Directional blockout";
       auto report=QString("Apply the sampled envelope at %1 mm grid spacing?\n"
                           "This derived mesh adds a planar base and omits vertex colors.").arg(spacing);
-      if(!before.margin.empty())report+="\nThe saved margin will be cleared for this derived mesh.";
+      if(before.hasMargins())report+="\nSaved margins on this scan will be cleared for the edited mesh.";
       if(!approveGeometry(before,*display,label,report))return;
       auto edited=before;
       edited.mesh=display->source;
-      edited.margin.clear();
+      edited.clearMargins();
       commitGeometry(row,std::move(edited),std::move(*display),label,
                      {{"axis",QJsonArray{axis.x,axis.y,axis.z}},{"gridMm",spacing}});
       if(after)after();
@@ -1114,10 +1303,10 @@ class Window : public QMainWindow {
       QString report=QString("Preview — apply this derived scan?\nTriangles: %1 → %2\nBoundary edges: %3 → %4\nDegenerate faces: %5 → %6\nNon-manifold edges: %7 → %8\nSampled bidirectional deviation: max %9 mm; RMS %10 mm (%11 samples).\n\nSampling is not a certified error bound. Original source data stays unchanged; this edit can be undone.")
         .arg(result->oldReport.triangles).arg(result->newReport.triangles).arg(result->oldReport.boundaryEdges).arg(result->newReport.boundaryEdges).arg(result->oldReport.degenerate).arg(result->newReport.degenerate).arg(result->oldReport.nonManifoldEdges).arg(result->newReport.nonManifoldEdges).arg(result->deviation.maximum,0,'g',6).arg(result->deviation.rms,0,'g',6).arg(result->deviation.samples);
       if(parameters.operation==zahn::Operation::FillHoles)report+="\nHole filling can also close a scan's outer boundary and create overlapping faces. Review the preview carefully.";
-      if(!before.margin.empty())report+="\nThe saved margin will be cleared for this derived mesh.";
+      if(before.hasMargins())report+="\nSaved margins on this scan will be cleared for the edited mesh.";
       if(!approveGeometry(before,result->display,label,report))return;
       auto edited=before;edited.mesh=result->mesh;
-      edited.margin.clear();
+      edited.clearMargins();
       QJsonObject audit{{"value",parameters.value},{"iterations",parameters.iterations},{"selectedFaceCount",qint64(parameters.selected.size())},{"selectedVertexCount",qint64(parameters.selectedVertices.size())},{"sampledMaxMm",result->deviation.maximum},{"sampledRmsMm",result->deviation.rms},{"samples",qint64(result->deviation.samples)}};
       if(parameters.operation==zahn::Operation::Crop)audit["boxMm"]=QJsonArray{parameters.box.minimum.x,parameters.box.maximum.x,parameters.box.minimum.y,parameters.box.maximum.y,parameters.box.minimum.z,parameters.box.maximum.z};
       commitGeometry(i,std::move(edited),std::move(result->display),label,std::move(audit));
@@ -1162,6 +1351,34 @@ class Window : public QMainWindow {
   void commitOpacity(int value) {
     int i=scans->currentRow();if(i<0||busy)return;
     auto& scan=document.project.scans[i];document.setDisplay(size_t(i),scan.visible,value/100.);
+  }
+  void importScanWithOptions(const QString& file, std::function<void()> after={}) {
+    QDialog dialog(this);
+    dialog.setObjectName("scan-import-options");
+    dialog.setWindowTitle("Import scan");
+    auto* form=new QFormLayout(&dialog);
+    auto* filename=new QLabel(QFileInfo(file).fileName());
+    filename->setWordWrap(true);
+    form->addRow("File",filename);
+    auto* role=new QComboBox;
+    role->setObjectName("scan-role");
+    role->addItems({"Upper jaw","Lower jaw","Antagonist","Bite","Reference","Restoration candidate"});
+    form->addRow("&Scan role",role);
+    auto* scale=new QDoubleSpinBox;
+    scale->setObjectName("scan-scale");
+    scale->setDecimals(6);
+    scale->setRange(0.000001,1000000);
+    scale->setValue(1);
+    form->addRow("Scale to &mm",scale);
+    auto* units=new QLabel("Use 1 if the scan is already in millimetres.");
+    units->setWordWrap(true);
+    form->addRow(units);
+    auto* buttons=new QDialogButtonBox(QDialogButtonBox::Ok|QDialogButtonBox::Cancel);
+    buttons->button(QDialogButtonBox::Ok)->setText("Import");
+    connect(buttons,&QDialogButtonBox::accepted,&dialog,&QDialog::accept);
+    connect(buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);
+    form->addRow(buttons);
+    if(dialog.exec()==QDialog::Accepted)loadScan(file,role->currentText(),scale->value(),std::move(after));
   }
   void buildWorkbench(const std::map<QString,QAction*>& actions,
                       const std::array<QMenu*,5>& stages, QDoubleSpinBox* elevation) {
@@ -1226,7 +1443,17 @@ class Window : public QMainWindow {
     margins->setMaximumHeight(118);
     margins->hide();
     sceneLayout->addWidget(margins);
-    auto selectMargin=[this](QListWidgetItem* item){scans->setCurrentRow(item->data(Qt::UserRole).toInt());};
+    auto selectMargin=[this](QListWidgetItem* item){
+      if(busy)return;
+      const int row=item->data(Qt::UserRole).toInt(), tooth=item->data(Qt::UserRole+1).toInt();
+      if(pointTool!=PointTool::None){
+        statusBar()->showMessage("Finish or cancel the active point tool before switching margins",6000);
+        updateTrace();
+        return;
+      }
+      scans->setCurrentRow(row);
+      guarded([&]{activateTooth(row,tooth);});
+    };
     connect(margins,&QListWidget::itemClicked,this,selectMargin);
     connect(margins,&QListWidget::itemActivated,this,selectMargin);
     left->addWidget(scene,1);
@@ -1324,12 +1551,38 @@ class Window : public QMainWindow {
     propertiesLayout->addStretch();
     const int propertiesTab=inspector->addTab(properties,"Tool Properties");
 
+    auto* workflow=new QWidget;
+    auto* workflowLayout=new QVBoxLayout(workflow);
+    workflowLayout->setContentsMargins(8,8,8,8);
+    auto* mode=new QComboBox;
+    mode->setObjectName("workflow-mode");
+    mode->setAccessibleName("Workflow mode");
+    mode->addItems({"Guided workflow","Expert tools"});
+    workflowLayout->addWidget(mode);
     auto* workflowPages=new QStackedWidget;
-    const int workflowTab=inspector->addTab(workflowPages,"Workflow");
+    workflowPages->setObjectName("workflow-pages");
+    workflowLayout->addWidget(workflowPages,1);
+    const int workflowTab=inspector->addTab(workflow,"Workflow");
     auto* group=new QButtonGroup(workbench);
     const std::array<QString,5> descriptions{
       "Import and register","Clean and repair","Select teeth and design","Inspect surfaces","Research STL"
     };
+    const std::array<QString,5> instructions{
+      "Open a case or import scans. Confirm the role and scale for each scan.",
+      "Select a scan in the scene. Use these tools if it needs preparation.",
+      "Select the preparation scan and tooth. Trace and apply the margin. Orient the view to the insertion direction before checking undercuts or building the crown.",
+      "Select a scan to inspect, or compare surfaces. Use the ruler for a point-to-point measurement.",
+      "Save the case to keep editing it later. Select an object in the scene to export its research STL."
+    };
+    const std::array<QStringList,5> guidedActions{{
+      {"Open project…","Recent cases…","Import scan…","Register using landmarks…"},
+      {"Vertex brush","Toggle crop/selection box","Crop to box…","Remove duplicate/degenerate faces…"},
+      {"Select tooth markup…","Trace or edit margin","Remove last draft point","Apply margin",
+       "Exit active point tool","Analyze insertion from view","Clear insertion overlay","Build research crown…"},
+      {"Inspect selected scan","Toggle distance measurement","Measure surface separation…",
+       "Set up reference measurement…","Record ruler reading","Export reference CSV…"},
+      {"Save","Export research STL…"}
+    }};
     const std::map<QString,QString> compactLabels{
       {"Delete selected vertices and incident faces…","Delete selection…"},
       {"Keep largest connected component…","Keep largest component…"},
@@ -1337,7 +1590,10 @@ class Window : public QMainWindow {
       {"Remove duplicate/degenerate faces…","Remove duplicate / bad faces…"},
       {"Orient connected faces consistently…","Orient faces consistently…"},
       {"Smooth with fixed boundary…","Smooth scan…"},
-      {"Simplify with topology preservation…","Simplify scan…"}
+      {"Simplify with topology preservation…","Simplify scan…"},
+      {"Toggle crop/selection box","Crop / selection box"},
+      {"Toggle distance measurement","Distance ruler"},
+      {"Analyze insertion from view","Check undercuts from view"}
     };
     for(size_t i=0;i<stages.size();++i){
       auto* stage=new QPushButton;
@@ -1370,28 +1626,60 @@ class Window : public QMainWindow {
       group->addButton(stage,int(i));
       stageRow->addWidget(stage,1);
 
-      auto* page=new QWidget;
-      auto* pageLayout=new QVBoxLayout(page);
-      pageLayout->setContentsMargins(12,14,12,12);
-      pageLayout->setSpacing(5);
-      pageLayout->addWidget(heading(stages[i]->title()));
-      for(auto* action:stages[i]->actions()){
-        if(action->isSeparator())continue;
-        const auto compact=compactLabels.find(action->text());
-        auto* control=button(action,compact==compactLabels.end()?action->text():compact->second);
-        control->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Fixed);
-        pageLayout->addWidget(control);
+      auto* views=new QStackedWidget;
+      views->setObjectName("workflow-stage-"+QString::number(i));
+      for(int expert=0;expert<2;++expert){
+        auto* page=new QWidget;
+        auto* pageLayout=new QVBoxLayout(page);
+        pageLayout->setContentsMargins(4,8,4,8);
+        pageLayout->setSpacing(5);
+        if(!expert){
+          auto* instruction=new QLabel(instructions[i]);
+          instruction->setWordWrap(true);
+          pageLayout->addWidget(instruction);
+        }
+        auto addControl=[&](QAction* action){
+          const auto compact=compactLabels.find(action->text());
+          auto* control=button(action,compact==compactLabels.end()?action->text():compact->second);
+          control->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Fixed);
+          pageLayout->addWidget(control);
+        };
+        if(expert){
+          for(auto* action:stages[i]->actions())if(!action->isSeparator())addControl(action);
+        }else{
+          for(const auto& title:guidedActions[i])addControl(actions.at(title));
+        }
+        pageLayout->addStretch();
+        auto* scroll=new QScrollArea;
+        scroll->setWidgetResizable(true);
+        scroll->setFrameShape(QFrame::NoFrame);
+        scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        scroll->setWidget(page);
+        views->addWidget(scroll);
       }
-      pageLayout->addStretch();
-      auto* scroll=new QScrollArea;
-      scroll->setWidgetResizable(true);
-      scroll->setFrameShape(QFrame::NoFrame);
-      scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-      scroll->setWidget(page);
-      workflowPages->addWidget(scroll);
+      connect(mode,&QComboBox::currentIndexChanged,views,&QStackedWidget::setCurrentIndex);
+      workflowPages->addWidget(views);
     }
-    group->button(1)->setChecked(true);
-    workflowPages->setCurrentIndex(1);
+    auto* steps=new QWidget;
+    auto* stepLayout=new QHBoxLayout(steps);
+    stepLayout->setContentsMargins(0,0,0,0);
+    auto* back=new QPushButton("Back");
+    back->setObjectName("workflow-back");
+    auto* next=new QPushButton("Next");
+    next->setObjectName("workflow-next");
+    stepLayout->addWidget(back);
+    stepLayout->addWidget(next);
+    workflowLayout->addWidget(steps);
+    group->button(0)->setChecked(true);
+    inspector->setCurrentIndex(workflowTab);
+    back->setEnabled(false);
+    connect(back,&QPushButton::clicked,this,[group]{group->button(group->checkedId()-1)->click();});
+    connect(next,&QPushButton::clicked,this,[group]{group->button(group->checkedId()+1)->click();});
+    connect(mode,&QComboBox::currentIndexChanged,steps,[steps](int index){steps->setVisible(index==0);});
+    connect(workflowPages,&QStackedWidget::currentChanged,this,[workflowPages,back,next](int index){
+      back->setEnabled(index>0);
+      next->setEnabled(index+1<workflowPages->count());
+    });
     connect(group,&QButtonGroup::idClicked,this,[this,workflowPages,workflowTab](int index){
       workflowPages->setCurrentIndex(index);
       inspector->setCurrentIndex(workflowTab);
@@ -1417,7 +1705,13 @@ class Window : public QMainWindow {
   }
 protected:
   bool eventFilter(QObject* watched,QEvent* event) override {
-    if(watched==view&&brushOverlay){if(event->type()==QEvent::Resize)brushOverlay->setGeometry(view->rect());if(event->type()==QEvent::Leave){brushOverlay->inside=false;brushOverlay->update();}}
+    if(watched==view){
+      if(event->type()==QEvent::Resize)viewportOverlay->setGeometry(view->rect());
+      if(event->type()==QEvent::Leave){
+        viewportOverlay->inside=false;
+        viewportOverlay->update();
+      }
+    }
     return QMainWindow::eventFilter(watched,event);
   }
   void closeEvent(QCloseEvent* event) override {
@@ -1441,11 +1735,18 @@ public:
     db=QSqlDatabase::addDatabase("QSQLITE");db.setDatabaseName(directory+"/cases.sqlite");
     if(db.open()){QSqlQuery q(db);q.exec("CREATE TABLE IF NOT EXISTS cases(path TEXT PRIMARY KEY,name TEXT)");}
     view=new QVTKOpenGLNativeWidget(this);view->setRenderWindow(render);render->AddRenderer(renderer);
-    brushOverlay=new BrushOverlay(view);brushOverlay->setGeometry(view->rect());brushOverlay->show();view->setMouseTracking(true);view->installEventFilter(this);
+    viewportOverlay=new ViewportOverlay(view);viewportOverlay->setGeometry(view->rect());viewportOverlay->show();view->setMouseTracking(true);view->installEventFilter(this);
     render->GetInteractor()->SetInteractorStyle(inputStyle);
     inputStyle->measure=[this](int x,int y){return measureAt(x,y);};
     inputStyle->paint=[this](int x,int y,bool erase){brushStamp(x,y,erase);};inputStyle->changed=[this]{updateSelection();};inputStyle->strokeEnded=[this]{strokeDepth.clear();};
-    inputStyle->hover=[this](int x,int y,bool erase){double ratio=view->devicePixelRatioF();brushOverlay->center={x/ratio,(render->GetSize()[1]-1-y)/ratio};brushOverlay->inside=true;brushOverlay->erase=erase;brushOverlay->update();};
+    inputStyle->hover=[this](int x,int y,bool erase){
+      if(!picking)return;
+      const double ratio=view->devicePixelRatioF();
+      viewportOverlay->center={x/ratio,(render->GetSize()[1]-1-y)/ratio};
+      viewportOverlay->inside=true;
+      viewportOverlay->erase=erase;
+      viewportOverlay->update();
+    };
     renderer->SetBackground(0.12,0.16,0.20);
     renderer->SetBackground2(0.065,0.085,0.11);
     renderer->GradientBackgroundOn();
@@ -1462,6 +1763,12 @@ public:
     traceActor->GetProperty()->SetLineWidth(3);
     traceActor->VisibilityOff();
     renderer->AddActor(traceActor);
+    otherMarginsActor->PickableOff();
+    otherMarginsActor->GetProperty()->SetColor(0.22,0.79,0.72);
+    otherMarginsActor->GetProperty()->SetPointSize(4);
+    otherMarginsActor->GetProperty()->SetLineWidth(2);
+    otherMarginsActor->VisibilityOff();
+    renderer->AddActor(otherMarginsActor);
     undercutActor->PickableOff();
     undercutActor->GetProperty()->SetColor(1,0.16,0.12);
     undercutActor->VisibilityOff();
@@ -1485,7 +1792,7 @@ public:
     opacity=new QSlider(Qt::Horizontal);
     opacity->setRange(0,100);opacity->setValue(100);
     brushRadius=new QSpinBox;brushRadius->setRange(5,200);brushRadius->setValue(30);
-    connect(brushRadius,&QSpinBox::valueChanged,this,[this](int radius){brushOverlay->radius=radius;inputStyle->radius=radius*view->devicePixelRatioF();brushOverlay->update();});
+    connect(brushRadius,&QSpinBox::valueChanged,this,[this](int radius){viewportOverlay->radius=radius;inputStyle->radius=radius*view->devicePixelRatioF();viewportOverlay->update();});
     auto* z=new QDoubleSpinBox;z->setRange(-10000,10000);
     connect(z,&QDoubleSpinBox::valueChanged,this,[this](double v){plane->SetOrigin(0,0,v);render->Render();});
     connect(opacity,&QSlider::valueChanged,this,[this](int value){
@@ -1521,8 +1828,8 @@ public:
     auto* margin=menuBar()->addMenu("Design");
     auto* analysis=menuBar()->addMenu("Analyze");
     auto* exportMenu=menuBar()->addMenu("Export");
-    undoAction=action(edit,"Undo",[this]{document.history.undo();});undoAction->setShortcut(QKeySequence::Undo);
-    redoAction=action(edit,"Redo",[this]{document.history.redo();});redoAction->setShortcut(QKeySequence::Redo);
+    undoAction=action(edit,"Undo",[this]{stepHistory(false);});undoAction->setShortcut(QKeySequence::Undo);
+    redoAction=action(edit,"Redo",[this]{stepHistory(true);});redoAction->setShortcut(QKeySequence::Redo);
     action(edit,"Remove selected scan",[this]{int i=scans->currentRow();if(i>=0)document.removeScan(size_t(i));});
     connect(&document.history,&QUndoStack::indexChanged,this,[this]{syncScene();},Qt::QueuedConnection);
     action(menu,"New case",[this]{if(!leave())return;bool ok;auto id=QInputDialog::getText(this,"Case identifier","Use a non-identifying case code",QLineEdit::Normal,{},&ok);if(!ok)return;
@@ -1536,9 +1843,10 @@ public:
     action(menu,"Save",[this]{save();})->setShortcut(QKeySequence::Save);
     action(menu,"Save as…",[this]{save(true);});
     action(menu,"Recover autosaved case…",[this]{loadCase({},true);});
-    action(scan,"Import scan…",[this]{auto file=QFileDialog::getOpenFileName(this,"Import scan",{},"Scans (*.stl *.ply *.obj)");if(file.isEmpty())return;
-      bool ok;double factor=QInputDialog::getDouble(this,"Confirm units","Multiply source coordinates by this factor to obtain mm",1,0.000001,1000000,6,&ok);if(!ok)return;
-      auto role=QInputDialog::getItem(this,"Assign scan","Role",{"Upper jaw","Lower jaw","Antagonist","Bite","Reference","Restoration candidate"},0,false,&ok);if(ok)loadScan(file,role,factor);});
+    action(scan,"Import scan…",[this]{
+      const auto file=QFileDialog::getOpenFileName(this,"Import scan",{},"Scans (*.stl *.ply *.obj)");
+      if(!file.isEmpty())importScanWithOptions(file);
+    });
     action(analysis,"Inspect selected scan",[this]{int i=scans->currentRow();if(i<0)return;auto mesh=document.project.scans[i].mesh;auto result=std::make_shared<QString>();
       runJob("Inspecting geometry",[mesh,result](const zahn::Checkpoint& check){*result=QString::fromStdString(zahn::inspect(*mesh,check).text());},
         [this,result]{QMessageBox::information(this,"Geometry diagnostics",*result);});});
@@ -1575,7 +1883,7 @@ public:
       if(!scan.sourceMesh||scan.mesh==scan.sourceMesh)return;
       scan.mesh=scan.sourceMesh;
       scan.operations=scan.format=="zmesh"&&!scan.operations.isEmpty()?QJsonArray{scan.operations.first()}:QJsonArray{};
-      scan.margin.clear();
+      scan.clearMargins();
       auto result=std::make_shared<zahn::DisplayMesh>();
       runJob("Restoring original",[mesh=scan.mesh,result](const zahn::Checkpoint& check){
         *result=zahn::prepareDisplay(mesh,check);
@@ -1589,13 +1897,13 @@ public:
     action(scan,"Register using landmarks…",[this]{startRegistration();});
     action(margin,"Select tooth markup…",[this]{selectTooth();});
     action(margin,"Trace or edit margin",[this]{startMargin();});
-    action(margin,"Remove last draft point",[this]{
+    removeDraftPointAction=action(margin,"Remove last draft point",[this]{
       if(pointTool!=PointTool::Margin||draft.empty())return;
-      draft.pop_back();
+      marginHistory.push(new MarginPointEdit(draft,draft.size()-1,draft.back(),std::nullopt));
       updateTrace();
       render->Render();
     });
-    action(margin,"Apply margin",[this]{applyMargin();});
+    applyMarginAction=action(margin,"Apply margin",[this]{applyMargin();});
     action(margin,"Clear saved margin",[this]{applyMargin(true);});
     action(margin,"Build research crown…",[this]{createResearchCrown();});
     action(analysis,"Analyze insertion from view",[this]{analyzeCurrentInsertion();});
@@ -1649,12 +1957,32 @@ public:
       (QFile::exists(directory+"/recovery.zahncad")||QFile::exists(directory+"/recovery.previous.zahncad")))
       QTimer::singleShot(0,this,[this]{if(QMessageBox::question(this,"Recovery available","Recover the last autosaved case? If the latest is damaged, the previous snapshot will be tried.")==QMessageBox::Yes)guarded([this]{loadCase({},true);});});
   }
+  void checkViewportBorder(const QColor& color,bool visible) {
+    const auto frame=grab();
+    const auto sample=view->mapTo(this,QPoint(view->width()/2,view->height()-2));
+    const auto pixel=frame.toImage().pixelColor((QPointF(sample)*frame.devicePixelRatio()).toPoint());
+    if((pixel==color)!=visible)
+      throw std::runtime_error(visible?"Active tool border was not visible":"Tool border remained after exit");
+  }
   void stage2Smoke(const QString& source,const QString& screenshot){
-    loadScan(source,"Reference",1,[this,screenshot]{guarded([this,screenshot]{
+    QTimer::singleShot(0,this,[this]{
+      auto* dialog=findChild<QDialog*>("scan-import-options");
+      auto* role=dialog?dialog->findChild<QComboBox*>("scan-role"):nullptr;
+      auto* scale=dialog?dialog->findChild<QDoubleSpinBox*>("scan-scale"):nullptr;
+      if(!role||!scale||scale->value()!=1){
+        reportFailure("Import smoke","Scan role or millimetre scale was unavailable");
+        return;
+      }
+      role->setCurrentText("Reference");
+      dialog->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->click();
+    });
+    importScanWithOptions(source,[this,screenshot]{guarded([this,screenshot]{
+      if(document.project.scans.at(0).role!="Reference")
+        throw std::runtime_error("Scan import ignored the selected role");
       auto* stages=workbench->findChild<QButtonGroup*>();
-      auto* workflow=qobject_cast<QStackedWidget*>(inspector->widget(1));
+      auto* workflow=findChild<QStackedWidget*>("workflow-pages");
       stages->button(0)->click();
-      if(inspector->currentWidget()!=workflow || workflow->currentIndex()!=0)
+      if(!workflow||inspector->currentIndex()!=1||workflow->currentIndex()!=0)
         throw std::runtime_error("Scan stage did not open its workflow");
       stages->button(1)->click();
       if(workflow->currentIndex()!=1)throw std::runtime_error("Prepare workflow did not open");
@@ -1668,6 +1996,9 @@ public:
       cache.at(original.get()).brush=std::make_shared<zahn::BrushIndex>(zahn::prepareBrush(cache.at(original.get()).geometry.full));
       (*brushButton)->click();
       if(!picking || inspector->currentIndex()!=0)throw std::runtime_error("Brush button did not activate Tool Properties");
+      QEvent leave(QEvent::Leave);
+      QApplication::sendEvent(view,&leave);
+      checkViewportBorder(brushHighlight,true);
       view->grabFramebuffer();
       auto* camera=renderer->GetActiveCamera();double cameraPosition[3],focalPoint[3],viewUp[3];camera->GetPosition(cameraPosition);camera->GetFocalPoint(focalPoint);camera->GetViewUp(viewUp);
       auto first=vertex[0];renderer->SetWorldPoint(first.x,first.y,first.z,1);renderer->WorldToDisplay();auto* position=renderer->GetDisplayPoint();int px=int(std::lround(position[0])),py=int(std::lround(position[1]));
@@ -1692,6 +2023,7 @@ public:
       double middleBefore[3];camera->GetPosition(middleBefore);interactor->InvokeEvent(vtkCommand::MiddleButtonPressEvent);interactor->SetEventPosition(px+60,py+40);interactor->InvokeEvent(vtkCommand::MouseMoveEvent);interactor->InvokeEvent(vtkCommand::MiddleButtonReleaseEvent);for(int i=0;i<3;++i)if(std::abs(camera->GetPosition()[i]-middleBefore[i])>1e-10)throw std::runtime_error("Middle drag moved camera in brush mode");
       double beforeZoom=camera->GetDistance();interactor->InvokeEvent(vtkCommand::MouseWheelForwardEvent);if(std::abs(camera->GetDistance()-beforeZoom)<1e-8)throw std::runtime_error("Wheel did not zoom");
       camera->SetPosition(cameraPosition);camera->SetFocalPoint(focalPoint);camera->SetViewUp(viewUp);renderer->ResetCameraClippingRange();setBrushActive(false);
+      checkViewportBorder(brushHighlight,false);
       std::set<QString> shortcuts;size_t shortcutCount=0;for(auto* top:menuBar()->actions())if(top->menu())for(auto* action:top->menu()->actions())for(auto key:action->shortcuts()){auto name=key.toString(QKeySequence::PortableText);if(name.isEmpty())continue;if(!shortcuts.insert(name).second)throw std::runtime_error("Duplicate shortcut");++shortcutCount;}
       if(shortcutCount<30||brushAction->shortcut()!=QKeySequence("B"))throw std::runtime_error("Tool/camera shortcuts missing");
       auto b=zahn::inspect(*original);double x=b.maximum.x-b.minimum.x,y=b.maximum.y-b.minimum.y;zahn::Parameters p;p.operation=zahn::Operation::Crop;p.box={{b.minimum.x+x*0.1,b.minimum.y+y*0.1,b.minimum.z-1},{b.maximum.x-x*0.1,b.maximum.y-y*0.1,b.maximum.z+1}};
@@ -1829,26 +2161,105 @@ public:
     constexpr zahn::LandmarkTriplet points{{{2,2,0},{7,2,0},{2,7,0}}};
     loadScan(source,"Upper jaw",1,[this,source,screenshot,points]{
       if(smokeMode==SmokeMode::Crown){
-        QTimer::singleShot(0,this,[this,screenshot]{
-          auto* chart=findChild<QDialog*>("tooth-chart");
-          if(!chart){reportFailure("Crown smoke","Tooth chart did not open");return;}
-          auto* selected=chart->findChild<QPushButton*>("tooth-16");
-          auto* lower=chart->findChild<QPushButton*>("tooth-46");
-          if(selected&&lower&&!lower->isEnabled()&&chart->grab().save(screenshot+".teeth.png","PNG"))selected->click();
-          else chart->reject();
-        });
-        selectTooth();
+        auto* mode=findChild<QComboBox*>("workflow-mode");
+        auto* pages=findChild<QStackedWidget*>("workflow-pages");
+        auto* back=findChild<QPushButton*>("workflow-back");
+        auto* next=findChild<QPushButton*>("workflow-next");
+        if(!mode||!pages||!back||!next||back->isEnabled()||pages->currentIndex()!=0)
+          throw std::runtime_error("Guided workflow did not start at Scan");
+        next->click();
+        next->click();
+        auto* design=findChild<QStackedWidget*>("workflow-stage-2");
+        if(!design||pages->currentWidget()!=design||design->currentIndex()!=0)
+          throw std::runtime_error("Next did not open the guided Design stage");
+        mode->setCurrentIndex(1);
+        if(design->currentIndex()!=1||next->isVisibleTo(inspector)||back->isVisibleTo(inspector))
+          throw std::runtime_error("Expert tools did not open on the current stage");
+        mode->setCurrentIndex(0);
+        back->click();
+        next->click();
+        if(pages->currentWidget()!=design||design->currentIndex()!=0||
+           !next->isVisibleTo(inspector)||!back->isVisibleTo(inspector))
+          throw std::runtime_error("Returning to guided mode did not preserve navigation");
+        selectToothForSmoke(16);
         document.history.undo();
         if(document.project.scans.at(0).toothFdi!=0)throw std::runtime_error("Tooth markup undo failed");
         document.history.redo();
         if(document.project.scans.at(0).toothFdi!=16)throw std::runtime_error("Tooth chart selection or redo failed");
       }
-      startMargin();
+      if(smokeMode==SmokeMode::Crown){
+        useGuidedDesignTool("Trace or edit margin");
+        if(pointTool!=PointTool::Margin||applyMarginAction->isEnabled())
+          throw std::runtime_error("Guided margin tool started in the wrong state");
+      }else startMargin();
+      checkViewportBorder(marginHighlight,true);
       for(const auto& point:points)clickSurface(point);
+      if(!undoAction->isEnabled()||redoAction->isEnabled())
+        throw std::runtime_error("Margin undo/redo availability was incorrect");
+      undoAction->trigger();
+      if(draft.size()!=2||applyMarginAction->isEnabled()||!redoAction->isEnabled())
+        throw std::runtime_error("Margin undo did not remove the last added point");
+      redoAction->trigger();
+      if(draft.size()!=3||!applyMarginAction->isEnabled())
+        throw std::runtime_error("Margin redo did not restore the point");
       clickSurface({2.1,2,0},true);
-      applyMargin();
-      if(document.project.scans[0].margin.size()!=3||document.project.scans[0].margin[0].x<2.05)
+      undoAction->trigger();
+      if(draft.front().x>2.05)throw std::runtime_error("Margin undo did not restore the moved point");
+      redoAction->trigger();
+      if(smokeMode==SmokeMode::Crown){
+        if(!applyMarginAction->isEnabled())throw std::runtime_error("The traced margin could not be applied");
+        useGuidedDesignTool("Apply margin");
+        if(applyMarginAction->isEnabled())throw std::runtime_error("Apply margin stayed available after committing");
+        if(!grab().save(screenshot+".workflow.png"))throw std::runtime_error("Could not capture the guided workflow");
+      }else applyMargin();
+      checkViewportBorder(marginHighlight,false);
+      const auto& first=document.project.scans[0].toothMargins.at(smokeMode==SmokeMode::Crown?16:0);
+      if(first.size()!=3||first[0].x<2.05)
         throw std::runtime_error("Margin trace or point move failed");
+      const int appliedIndex=document.history.index();
+      startMargin();
+      if(undoAction->isEnabled()||redoAction->isEnabled())
+        throw std::runtime_error("A new draft inherited a previous undo history");
+      clickSurface({4.5,2,0});
+      if(draft.size()!=4||std::abs(draft[1].x-4.5)>0.05)
+        throw std::runtime_error("Clicking a saved margin segment did not insert its point in order");
+      undoAction->trigger();
+      redoAction->trigger();
+      if(draft.size()!=4||std::abs(draft[1].x-4.5)>0.05)
+        throw std::runtime_error("Redo did not restore the inserted point at its segment");
+      if(smokeMode==SmokeMode::Crown&&!grab().save(screenshot+".insert.png"))
+        throw std::runtime_error("Could not capture the inserted margin point");
+      removeDraftPointAction->trigger();
+      if(draft.size()!=3)throw std::runtime_error("Removing a draft point failed");
+      undoAction->trigger();
+      if(draft.size()!=4)throw std::runtime_error("Undo did not restore the removed point");
+      clickSurface({2.05,4.5,0});
+      if(draft.size()!=5||std::abs(draft.back().y-4.5)>0.05||redoAction->isEnabled())
+        throw std::runtime_error("The closing segment or redo after a new edit was incorrect");
+      cancelPointTool();
+      checkViewportBorder(marginHighlight,false);
+      if(document.history.index()!=appliedIndex||
+         document.project.scans[0].toothMargins.at(smokeMode==SmokeMode::Crown?16:0).size()!=3)
+        throw std::runtime_error("Draft edits changed the committed margin");
+      if(smokeMode==SmokeMode::Crown){
+        selectToothForSmoke(17,screenshot+".teeth.png");
+        startMargin();
+        if(!draft.empty())throw std::runtime_error("A new tooth inherited the previous margin");
+        for(const auto& point:zahn::LandmarkTriplet{{{6,6,0},{8,6,0},{6,8,0}}})clickSurface(point);
+        applyMargin();
+        applyMargin(true);
+        const auto& cleared=document.project.scans.at(0).toothMargins;
+        if(cleared.at(16).size()!=3||!cleared.at(17).empty())
+          throw std::runtime_error("Clearing tooth 17 changed another tooth's margin");
+        document.history.undo();
+        syncScene();
+        if(scans->count()!=1||margins->count()!=2||!otherMarginsActor->GetVisibility())
+          throw std::runtime_error("Two saved margins did not appear on the same scan");
+        margins->itemClicked(margins->item(0));
+        if(document.project.scans.at(0).toothFdi!=16)
+          throw std::runtime_error("Selecting a saved margin did not activate its tooth");
+        saveScreenshot(screenshot+".two-margins.png");
+      }
       loadScan(source,"Restoration candidate",1,[this,screenshot,points]{
         auto fixed=document.project.scans[1];
         zahn::RigidAlignment translation;
@@ -1877,6 +2288,27 @@ public:
         });
       });
     });
+  }
+  void useGuidedDesignTool(const QString& name) {
+    auto* design=findChild<QStackedWidget*>("workflow-stage-2");
+    for(auto* tool:design->currentWidget()->findChildren<QToolButton*>()){
+      if(tool->accessibleName()!=name)continue;
+      tool->click();
+      return;
+    }
+    throw std::runtime_error("Guided Design tool is missing");
+  }
+  void selectToothForSmoke(int tooth,const QString& screenshot={}) {
+    QTimer::singleShot(0,this,[this,tooth,screenshot]{
+      auto* chart=findChild<QDialog*>("tooth-chart");
+      if(!chart){reportFailure("Crown smoke","Tooth chart did not open");return;}
+      auto* selected=chart->findChild<QPushButton*>(QString("tooth-%1").arg(tooth));
+      auto* lower=chart->findChild<QPushButton*>("tooth-46");
+      if(selected&&lower&&!lower->isEnabled()&&(screenshot.isEmpty()||chart->grab().save(screenshot,"PNG")))selected->click();
+      else chart->reject();
+    });
+    useGuidedDesignTool("Select tooth markup…");
+    if(document.project.scans.at(0).toothFdi!=tooth)throw std::runtime_error("Tooth chart selection failed");
   }
   void referenceSmoke(const QString& source,const QString& screenshot) {
     loadScan(source,"Reference",1,[this,screenshot]{
@@ -1918,7 +2350,7 @@ public:
   }
   void verifyAnalysis(const QString& screenshot) {
     auto& scan=document.project.scans[0];
-    if(!scan.operations.size()||scan.margin.size()!=3||std::abs(scan.margin[0].z-2)>0.001||
+    if(!scan.operations.size()||!registeredMarginsMatch(scan)||
        scan.mesh->colors!=scan.sourceMesh->colors)
       throw std::runtime_error("Registration did not transform the margin and preserve colors");
     document.history.undo();
@@ -1933,10 +2365,10 @@ public:
     const auto reopened=zahn::loadProject(screenshot+".zahncad");
     if(reopened.scans.at(1).role!="Restoration candidate")
       throw std::runtime_error("Restoration candidate role failed to reopen");
-    if(reopened.scans.at(0).margin.size()!=3||std::abs(reopened.scans.at(0).margin.at(0).z-2)>0.001)
+    if(!registeredMarginsMatch(reopened.scans.at(0)))
       throw std::runtime_error("Saved registered margin failed to reopen");
     blockoutScan(0,{0,0,1},0.5,[this,screenshot]{
-      if(!document.project.scans[0].margin.empty()||document.project.scans[0].operations.size()!=2)
+      if(document.project.scans[0].hasMargins()||document.project.scans[0].operations.size()!=2)
         throw std::runtime_error("Blockout did not record its derived geometry");
       saveTo(screenshot+".blockout.zahncad");
       saveScreenshot(screenshot+".blockout.png");
@@ -1947,9 +2379,18 @@ public:
       }else QApplication::exit(0);
     });
   }
+  bool registeredMarginsMatch(const zahn::Scan& scan) const {
+    const bool multi=smokeMode==SmokeMode::Crown;
+    auto matches=[&](int tooth,double minX,double maxX){
+      const auto it=scan.toothMargins.find(tooth);
+      return it!=scan.toothMargins.end()&&it->second.size()==3&&it->second[0].x>=minX&&it->second[0].x<=maxX&&
+        std::all_of(it->second.begin(),it->second.end(),[](auto p){return std::abs(p.z-2)<0.001;});
+    };
+    return scan.toothMargins.size()==(multi?2u:1u)&&matches(multi?16:0,2.05,2.2)&&(!multi||matches(17,5.9,6.1));
+  }
   void verifyCrown(const QString& screenshot) {
     const auto preparation=document.project.scans.at(0);
-    if(preparation.toothFdi!=16||preparation.margin.size()!=3||preparation.operations.size()!=1)
+    if(preparation.toothFdi!=16||!registeredMarginsMatch(preparation)||preparation.operations.size()!=1)
       throw std::runtime_error("Tooth markup and margin did not survive registration and blockout undo");
     auto* camera=renderer->GetActiveCamera();
     camera->SetPosition(0,0,1);
@@ -1975,9 +2416,9 @@ public:
         const auto& base=document.project.scans.at(0);
         const auto& crown=document.project.scans.at(2);
         const auto geometry=zahn::inspect(*crown.mesh);
-        if(base.toothFdi!=16||base.margin.size()!=3||crown.toothFdi!=16||crown.format!="zmesh"||
+        if(base.toothFdi!=16||!registeredMarginsMatch(base)||crown.toothFdi!=16||crown.format!="zmesh"||
            crown.role!="Restoration candidate"||crown.sourceMesh!=crown.mesh||crown.operations.size()!=1||
-           !geometry.closed()||std::abs(geometry.maximum.z-7)>0.001)
+           !geometry.closed()||std::abs(geometry.maximum.z-7)>0.001||geometry.maximum.x>7.1)
           throw std::runtime_error("Crown geometry, provenance or tooth markup did not reopen");
         measureSeparationBetween(2,0,[](const auto& report){
           if(report.minimum>0.001)throw std::runtime_error("Crown rim did not meet the registered margin plane");

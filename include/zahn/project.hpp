@@ -6,6 +6,7 @@
 #include <vector>
 #include <memory>
 #include <optional>
+#include <map>
 namespace zahn {
 struct Scan {
   QString name, role;
@@ -17,8 +18,11 @@ struct Scan {
   QString format="stl";
   std::shared_ptr<const Mesh> sourceMesh;
   QJsonArray operations;
-  std::vector<Vec3> margin;
+  // Key 0 preserves an unassigned margin. Numbered teeth may have empty traces.
+  std::map<int,std::vector<Vec3>> toothMargins;
   int toothFdi=0;
+  bool hasMargins() const;
+  void clearMargins();
 };
 struct ReferenceReading {
   QString scanName, scanRole, sourceSha256, appVersion, platform, capturedUtc;

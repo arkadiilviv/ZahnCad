@@ -60,14 +60,16 @@ manufacturing or clinical suitability.
   Choose the fixed scan. Pick three well-separated, non-collinear matching
   landmarks on each scan in the same order. Review the preview and landmark
   residuals before applying. The transform preserves scale and vertex colors
-  and moves any saved margin with the scan. Inspect alignment away from the
+  and moves all saved margins with the scan. Inspect alignment away from the
   three landmarks.
 - Choose **Design → Trace or edit margin** on a visible scan.
-  Click to add points. Shift+click near a point to move it. Remove the last
-  draft point or press Escape to discard edits. **Apply margin** saves a
-  closed polyline with straight segments between the picked surface points.
+  Click the scan to trace points in order. When editing a saved margin, click
+  near a segment to insert a point between its ends. Shift+click near a point
+  to move it. Use **Undo** (Ctrl+Z) and **Redo** (Ctrl+Y or Ctrl+Shift+Z) for
+  point edits, or press Escape to discard the draft. **Apply margin** commits
+  the whole draft as one case edit and closes the polyline.
   Use close spacing on curved areas. Geometry-changing preparation clears the
-  saved margin, apart from rigid registration. Undo restores it.
+  saved margins on that scan, apart from rigid registration. Undo restores them.
 - Orient the view along a proposed withdrawal direction and choose **Analyze
   insertion from view**. Orbit to see sampled shadowed triangles in red.
   The report checks up to 100,000 face centroids along parallel rays and gives
@@ -99,12 +101,15 @@ blockout at two grid spacings to record changes in its bounds and surface.
 
 1. Select a visible preparation scan. Open **Design → Select tooth markup**
    and choose a permanent tooth from the FDI chart. The scene shows the chosen
-   number next to the scan and its saved margin. Reopen the chart to change or
-   clear the assignment. Each scan stores one assignment and one margin.
+   number next to the scan. Choose another tooth on the same scan to add or
+   switch to it. Each tooth has its own margin. Click a row in **Saved margins**
+   to switch directly. The active margin is gold and other saved margins on
+   that scan are teal. **Clear saved margin** affects the active tooth.
 2. Trace and apply a margin around the tooth. For this prototype, trace the
    points in order so the outline is convex when viewed along the insertion
    direction. Rotate the view to look along that direction before generating.
-3. Choose **Design → Build research crown**, enter a height above the highest
+3. With the intended tooth active, choose **Design → Build research crown**,
+   enter a height above the highest
    margin point and inspect the preview. **Apply** adds a separate restoration
    candidate. Changing the scan or margin afterward leaves that candidate as
    built. Generate a fresh candidate after adjusting the preparation.

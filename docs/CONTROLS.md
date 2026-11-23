@@ -3,6 +3,15 @@
 Menu entries display their shortcuts. **F12** opens the in-app controls list.
 Shortcuts apply to the main window, not modal filename/case/parameter dialogs.
 
+**Guided workflow** starts at Scan. Use **Back** and **Next** or click a stage
+to move between Scan, Prepare, Design, Analyze and Export. Navigation changes
+the controls on the right. Use **Apply margin** to commit a trace before
+checking undercuts or building a crown. Choose **Expert tools** in the Workflow
+tab to see the full set of actions for the current stage.
+
+After choosing a scan file, confirm its role and scale together. Leave the
+scale at 1 for files already in millimetres.
+
 | Camera | Key |
 |---|---|
 | Fit all scans | F |
@@ -33,7 +42,13 @@ Shortcuts apply to the main window, not modal filename/case/parameter dialogs.
 | Restore original | Ctrl+Alt+R |
 
 New/open/import/save/save-as use Ctrl+N/O/I/S/Shift+S. Undo: Ctrl+Z.
-Redo: Ctrl+Y or Ctrl+Shift+Z.
+Redo: Ctrl+Y or Ctrl+Shift+Z. While tracing a margin, these shortcuts undo and
+redo point edits in the draft. Click to add a point, click near a saved
+segment to insert one, and Shift+click near a point to move it.
+
+The viewport has a teal border while the vertex brush is active and an amber
+border during margin tracing. The border stays visible while orbiting and
+disappears when you exit the tool.
 
 Press **M**, then click two points on visible scan surfaces to measure the
 straight-line distance in millimetres. A third click starts a new measurement.

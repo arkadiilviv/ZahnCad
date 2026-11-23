@@ -1,46 +1,43 @@
 # ZahnCAD
 
 Free, local-first dental CAD research project for Windows and Linux.
-License: GPL-3.0-or-later. Version 0.3.1 adds camera/tool hotkeys and vertex brushing.
+ZahnCAD lets you inspect and prepare scans, trace tooth margins, and prototype
+single crowns. Licensed under GPL-3.0-or-later.
 
-See [capability status](docs/FEATURES.md), [development milestones](docs/ROADMAP.md)
-and [verification record](docs/VERIFICATION.md). Behavior and remaining limits are
-documented in [viewer reliability](docs/RELIABILITY.md).
-See [M0 research evaluation](docs/EVALUATION.md) and
-[M1 viewer and packaging acceptance](docs/M1_ACCEPTANCE.md) for work in progress.
+![ZahnCAD guided Design workspace with an amber viewport border and a margin point inserted on the lower segment](docs/images/margin-editor.png)
 
-## Implemented
+*Margin editing in the guided Design workspace, using a synthetic scan.*
 
-- Dependency-free C++20 core: strict binary/ASCII STL loading, positive scaling,
-  binary export, bounds, degeneracy, boundary, manifold-edge and winding checks.
-- Headless `zahncad-cli inspect scan.stl` and
-  `zahncad-cli convert scan.stl scaled.stl 25.4`.
-- Optional Qt6/VTK desktop: multiple scans, role and scale confirmation,
-  visibility, opacity, standard views, projection, distance measurement,
-  clipping and PNG screenshots.
-- ZIP `.zahncad` projects with versioned JSON, original STL bytes, scale and
-  display settings; atomic saves, autosave recovery and a SQLite recent-case index.
-- Undo/redo for scan import/removal, visibility and opacity; history shares
-  immutable geometry and does not duplicate meshes for display changes.
-- Cancellable background scan/project loading, geometry preparation and diagnostics.
-- Display-only navigation LOD for scans above 200,000 triangles; full-resolution
-  data returns after navigation and is used for diagnostics and export.
-- Nonblocking autosave, two recovery snapshots with fallback, and a session lock
-  that prevents concurrent instances from overwriting recovery files.
-- PLY (ASCII and binary) and OBJ polygon import with vertex RGB and double
-  coordinates. Original file bytes remain unchanged.
-- Face/box selection, exact axis-aligned cropping, component isolation, duplicate
-  and degenerate face removal, winding correction, limited hole filling,
-  fixed-boundary smoothing and topology-preserving simplification.
-- Candidate previews and before/after reports with sampled bidirectional deviation;
-  geometry edits are undoable. Projects retain source and edited meshes.
-- Three-landmark rigid registration, editable saved margin traces, sampled
-  insertion analysis and directional blockout.
-- Permanent-tooth FDI markup and a hollow research crown prototype from a saved
-  convex margin. Generated crowns are separate restoration candidates.
+## Features
 
-See [scan-preparation instructions and limits](docs/SCAN_PREPARATION.md).
-See [keyboard and mouse controls](docs/CONTROLS.md), also available with F12.
+- **Guided workflow and Expert tools.** Move through Scan, Prepare, Design,
+  Analyze, and Export. A teal viewport border marks vertex brushing and an
+  amber border marks margin tracing.
+- **Scan import and viewing.** Open STL, PLY, and OBJ scans, including vertex
+  colors where supported. Assign roles and scales, adjust visibility and opacity,
+  and use standard views, clipping, and PNG screenshots. Large meshes use
+  simplified display geometry during navigation and return to full detail afterward.
+- **Reversible scan preparation.** Select vertices with a brush or box, crop,
+  isolate components, clean faces, fill small holes, smooth, or simplify.
+  Review the edit preview and sampled deviation before applying it.
+- **Registration and tooth margins.** Align scans using three landmark pairs.
+  Save separate margins for multiple FDI teeth on one scan. Insert, move, and
+  remove draft points with Undo and Redo.
+- **Insertion, blockout, and research crowns.** Check sampled undercuts from
+  the current view, generate a directional blockout, or build a separate hollow
+  crown candidate from the active tooth's convex margin.
+- **Measurement and export.** Measure point-to-point distances and sampled
+  surface separation, record repeat readings in a CSV, and export research STL.
+  The headless `zahncad-cli` also inspects and converts STL files.
+- **Local cases and recovery.** Save source and edited meshes in a `.zahncad`
+  project, reopen recent cases, and recover from either of two autosave snapshots.
+
+[Controls (F12)](docs/CONTROLS.md) · [Scan preparation guide](docs/SCAN_PREPARATION.md)
+· [Capability status](docs/FEATURES.md) · [Roadmap](docs/ROADMAP.md)
+· [Verification record](docs/VERIFICATION.md)
+
+The [M0 research evaluation](docs/EVALUATION.md), [M1 acceptance checklist](docs/M1_ACCEPTANCE.md),
+and [viewer reliability notes](docs/RELIABILITY.md) describe the remaining evaluation work.
 
 ## Build the core
 

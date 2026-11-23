@@ -29,9 +29,10 @@ void checkResearchCrown(zahn::Scan preparation) {
   }
 
   preparation.toothFdi=16;
-  preparation.margin=outline;
+  preparation.toothMargins[16]=outline;
   zahn::Scan crown;
   crown.toothFdi=16;
+  crown.toothMargins.try_emplace(16);
   crown.format="zmesh";
   crown.role="Restoration candidate";
   crown.sourceMesh=mesh;
@@ -47,9 +48,25 @@ void checkResearchCrown(zahn::Scan preparation) {
   damaged.close();
   auto reopened=zahn::loadRecovery(recovery.path());
   const auto& restored=reopened.scans.at(0);
-  require(reopened.id=="Crown"&&restored.toothFdi==16&&reopened.scans.at(1).margin.size()==4&&
+  require(reopened.id=="Crown"&&restored.toothFdi==16&&reopened.scans.at(1).toothMargins.at(16).size()==4&&
     zahn::inspect(*restored.mesh).minimum.x==1&&zahn::inspect(*restored.sourceMesh).minimum.x==0,
     "Version 4 mixed-case recovery lost markup or generated meshes");
+
+  auto adjacent=outline;
+  for(auto& point:adjacent)point.x+=5;
+  preparation.toothMargins[17]=adjacent;
+  preparation.toothMargins.try_emplace(18);
+  preparation.toothFdi=17;
+  project.scans={preparation,crown}; // Single-tooth scan follows the version 6 scan.
+  project.reference=zahn::ReferenceMeasurement{"A and B","Synthetic geometry",{},5,0.05};
+  const auto file=recovery.filePath("multi-tooth.zahncad");
+  zahn::saveProject(project,file);
+  const auto multi=zahn::loadProject(file);
+  const auto& arch=multi.scans.at(0);
+  require(multi.reference.has_value()&&arch.toothFdi==17&&arch.toothMargins.size()==3&&
+    arch.toothMargins.at(16).front().x==outline.front().x&&
+    arch.toothMargins.at(17).front().x==adjacent.front().x&&arch.toothMargins.at(18).empty(),
+    "Multi-tooth project lost a margin, an empty assignment, or its active tooth");
 }
 void checkSampledSeparation() {
   zahn::Mesh large,small;
@@ -103,24 +120,24 @@ void checkPreparation(zahn::Scan scan,const QTemporaryDir& directory) {
 
   zahn::Document document;
   document.addScan(scan);
-  scan.margin.assign(fixed.begin(),fixed.end());
+  scan.toothMargins[0].assign(fixed.begin(),fixed.end());
   scan.mesh=std::make_shared<const zahn::Mesh>(moved);
   document.replaceScan(0,scan,"Trace and register");
   document.history.undo();
-  require(document.project.scans[0].margin.empty(),"Margin undo failed");
+  require(!document.project.scans[0].hasMargins(),"Margin undo failed");
   document.history.redo();
   const auto path=directory.filePath("margin.zahncad");
   zahn::saveProject(document.project,path);
   const auto reopened=zahn::loadProject(path);
   const auto& saved=reopened.scans[0];
-  require(saved.margin.size()==3&&saved.margin[1].y==8&&saved.original==scan.original&&
+  require(saved.toothMargins.at(0).size()==3&&saved.toothMargins.at(0)[1].y==8&&saved.original==scan.original&&
           saved.mesh!=saved.sourceMesh,"Version 3 margin and geometry roundtrip");
   zahn::saveRecovery(document.project,directory.path());
   zahn::saveRecovery(document.project,directory.path());
   QFile corrupt(directory.filePath("recovery.zahncad"));
   require(corrupt.open(QIODevice::WriteOnly)&&corrupt.write("broken")==6,"Corruption fixture write");
   corrupt.close();
-  require(zahn::loadRecovery(directory.path()).scans[0].margin.size()==3,"Version 3 recovery fallback");
+  require(zahn::loadRecovery(directory.path()).scans[0].toothMargins.at(0).size()==3,"Version 3 recovery fallback");
 }
 int main(int argc,char** argv){QCoreApplication app(argc,argv);try{
   if(argc==2){auto external=zahn::loadProject(QString::fromLocal8Bit(argv[1]));require(external.scans.size()==1,"Interop scan count");auto& scan=external.scans[0];require(scan.sourceMesh!=scan.mesh&&!scan.operations.isEmpty(),"Interop derived state");require(!scan.mesh->colors.empty()&&scan.mesh->colors.size()==scan.mesh->triangles.size(),"Interop colors");require(zahn::inspect(*scan.mesh).minimum.x>zahn::inspect(*scan.sourceMesh).minimum.x,"Interop crop bounds");}

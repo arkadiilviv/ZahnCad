@@ -15,7 +15,7 @@
 | Edited projects | v2 preserves source/current mesh, RGB and operation summaries; reads v1 | Larger mixed-format projects |
 | Registration, margins, insertion analysis and blockout | Three-landmark rigid fit, saved editable margins, sampled directional analysis and grid envelope | Representative-scan alignment, trace repeatability and resolution checks |
 | Crown research bench tools | Candidate import role and sampled surface separation | Bench comparison against independently measured references |
-| Tooth markup and research crown | One FDI tooth and saved margin per scan. Generates a hollow prototype from a convex margin and the current view axis. | Anatomical design, fit and thickness checks, reviewed CC0 library and physical bench measurements |
+| Tooth markup and research crown | Separate margins for multiple FDI teeth on one scan. Generates a hollow prototype from the active tooth's convex margin and the current view axis. | Anatomical design, fit and thickness checks, reviewed CC0 library and physical bench measurements |
 | Copings, bridges, inlays, veneers and fit checks | Pending | M4 |
 | Manufacturing export | Unavailable | All mandatory geometry/material/accessibility checks |
 | Professional use claims | Unavailable | Market, intended use and evidence review |

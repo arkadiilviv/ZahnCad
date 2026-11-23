@@ -186,3 +186,48 @@ The packaged Windows app passed the reference test, public typodont import and
 navigation, M1 viewer and recovery, M2 preparation, and M3 crown smokes.
 Evidence is in `out/m0-reference/`. Independent reference measurements on a
 physical model and external workflow review remain open.
+
+## Multiple tooth margins per scan
+
+The Windows desktop M3 smoke traced two margins on one scan, showed both
+overlays, cleared only the active tooth's margin and restored it with Undo.
+It switched teeth through Saved margins, registered both outlines with the
+scan, reopened them from the project, and built a crown from the active margin.
+Surface tests covered version 3 and 4 single-margin cases and a version 6
+case containing two saved margins, an empty tooth assignment and an M0
+reference measurement. Evidence is in `out/multi-tooth/`.
+
+## M0–M3 Windows verification, 2026-11-23
+
+The Windows Release build passed all four CTest suites. Packaged desktop smoke
+tests ran with a Windows-only PATH. The runnable bundle is in `out/ZahnCAD/`
+and the unsigned Inno Setup installer and checksum are in `out/`.
+
+| Stage | Verified in this run | Open acceptance evidence |
+|---|---|---|
+| M0 | Synthetic scale and topology, reference CSV after reopening, full detail restored on a five-million-triangle fixture, upper-arch typodont import and navigation | External workflow review and independently measured representative model |
+| M1 | 4.993 mm ruler reading for a 5 mm fixture, recent-case roundtrip, latest and fallback recovery after forced close | Full manual walkthrough on a clean account, installer install/uninstall and presented-frame measurements on representative scans |
+| M2 | Import role and millimetre scale dialog, colored crop, brush selection, landmark registration, margin editing and directional blockout | Representative-scan registration error, margin repeatability and undercut/blockout comparisons against reference measurements |
+| M3 | Guided/Expert switching, tooth chart, two saved margins on the same scan, closed tooth 16 crown, undo/redo, persistence and a synthetic 2 mm separation check | Reviewed CC0 anatomy library, anatomical design, fit and thickness checks, and physical bench measurements |
+
+Evidence is in `out/m0-m3-guided/baseline-current/` and
+`out/m0-m3-guided/packaged-current/`. This run exercised the runnable Windows
+bundle directly. The clean-account installer walkthrough and Linux rerun
+remain open.
+
+The desktop guide follows the DentalCAD sequence of tooth selection, margin
+editing, insertion review and design. The Expert view exposes the full set of
+ZahnCAD actions for the selected stage. Margin tracing and insertion direction
+are manual in ZahnCAD. DentalCAD also documents automatic margin and insertion
+axis detection. [DentalCAD overview](https://wiki.exocad.com/wiki/index.php/DentalCAD_-_overview)
+· [Margins](https://wiki.exocad.com/wiki/index.php/Detect_/_edit_margins)
+· [Insertion axis](https://wiki.exocad.com/wiki/index.php/Setting_Insertion_axis)
+
+## Margin point editing, 2026-11-23
+
+The Windows Release build passed all four CTest suites. The packaged M2 and M3
+smoke tests verified draft undo and redo after adding, moving, removing and
+inserting points. They also covered insertion on the closing segment,
+invalidation of redo after a new edit, and discarding draft changes without
+altering the saved margin. The packaged viewer smoke passed with the same
+Windows-only PATH. Evidence is in `out/margin-point-edit/packaged/`.

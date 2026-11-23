@@ -45,3 +45,11 @@ scale-to-mm factor, measured distance in mm, reopen flag, application version,
 platform and UTC capture time. Readers preserve compatibility with versions
 1–4. The CSV derives signed errors, tolerance results and repeat spread from
 these stored readings.
+
+Version 6 adds `toothMargins` to a scan with multiple tooth assignments or
+margins. Each entry has a unique `toothFdi` and an optional `marginMm` trace.
+An absent trace on a numbered tooth means the tooth has been added but has no
+saved margin. Tooth number `0` is reserved for an unassigned trace. The scan's
+own `toothFdi` selects its active tooth. Versions 3–5 and single-tooth entries
+still use the scan-level `marginMm`, which the reader associates with that
+tooth or retains as unassigned.
